@@ -10,6 +10,21 @@ A Chrome extension that protects users from phishing attempts by monitoring emai
 - **Real-time Detection**: Scan emails for suspicious domain variations
 - **Chrome Extension**: Seamlessly integrates with Gmail and other email services
 
+## What technologies are used for this project?
+
+This project is built with:
+
+- Vite
+- TypeScript
+- React
+- shadcn-ui
+- Tailwind CSS
+- Chrome Extension APIs
+
+## How to build
+In the parent directory run `npm run build`.
+In Chrome you can load in an unpacked extension by navigating to the `dist/` and open it up.
+
 ## CSV Import
 
 Vervain supports bulk importing of contacts and domains via CSV files:
@@ -35,17 +50,6 @@ business.net
 3. Use the CSV Import Manager to upload your file
 4. Preview the data and import new entries
 5. Download templates if you need help with formatting
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-- Chrome Extension APIs
 
 ## License
 
