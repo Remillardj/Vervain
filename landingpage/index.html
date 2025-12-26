@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vervain — Email Phishing Protection</title>
+  <meta name="description" content="Free, open-source Chrome extension that detects domain spoofing, homograph attacks, and sender impersonation in your inbox.">
+  <link rel="icon" type="image/png" href="vervain.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Animated background -->
+  <div class="bg-pattern"></div>
+  <div class="gradient-orb orb-1"></div>
+  <div class="gradient-orb orb-2"></div>
+  <div class="gradient-orb orb-3"></div>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="#" class="nav-logo">
+        <img src="vervain.png" alt="Vervain" class="logo-img">
+        <span class="logo-text">Vervain</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it Works</a>
+        <a href="https://github.com/Remillardj/Vervain" target="_blank">GitHub</a>
+        <a href="https://github.com/Remillardj/Vervain" class="nav-cta" target="_blank">Get Extension</a>
+      </div>
+      <button class="mobile-menu-btn" aria-label="Toggle menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Mobile menu -->
+  <div class="mobile-menu">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How it Works</a>
+    <a href="https://github.com/Remillardj/Vervain" target="_blank">GitHub</a>
+    <a href="https://github.com/Remillardj/Vervain" class="nav-cta" target="_blank">Get Extension</a>
+  </div>
+
+  <!-- Hero Section -->
+  <header class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        Free & Open Source
+      </div>
+      <h1 class="hero-title">
+        Protect your inbox from <span class="gradient-text">phishing attacks</span>
+      </h1>
+      <p class="hero-subtitle">
+        Vervain detects domain spoofing, homograph attacks, and sender impersonation 
+        in real-time — before you click that dangerous link.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/Remillardj/Vervain" class="btn btn-primary" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          Get Started on GitHub
+        </a>
+        <a href="#how-it-works" class="btn btn-secondary">
+          See how it works
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-number">100+</span>
+          <span class="stat-label">Attack variations detected</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-number">Real-time</span>
+          <span class="stat-label">Email scanning</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-number">100%</span>
+          <span class="stat-label">Free forever</span>
+        </div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="browser-mockup">
+        <div class="browser-header">
+          <div class="browser-dots">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="browser-url">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            mail.google.com
+          </div>
+        </div>
+        <div class="browser-content">
+          <div class="email-list">
+            <div class="email-item safe">
+              <div class="email-icon safe">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+              </div>
+              <div class="email-content">
+                <span class="email-sender">support@company.com</span>
+                <span class="email-subject">Your invoice is ready</span>
+              </div>
+            </div>
+            <div class="email-item danger">
+              <div class="email-icon danger">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </div>
+              <div class="email-content">
+                <span class="email-sender">support@cornpany.com</span>
+                <span class="email-subject">Urgent: Verify your account</span>
+              </div>
+              <div class="vervain-warning">
+                <div class="warning-badge">
+                  <img src="vervain.png" alt="" class="warning-logo">
+                  Phishing Detected
+                </div>
+                <span class="warning-detail">Suspicious domain variation of company.com</span>
+              </div>
+            </div>
+            <div class="email-item safe">
+              <div class="email-icon safe">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+              </div>
+              <div class="email-content">
+                <span class="email-sender">john@company.com</span>
+                <span class="email-subject">Meeting notes from yesterday</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Features Section -->
+  <section id="features" class="features">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Features</span>
+        <h2 class="section-title">Everything you need to stay safe</h2>
+        <p class="section-subtitle">Vervain combines multiple detection methods to provide comprehensive protection against email-based phishing attacks.</p>
+      </div>
+      
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+          </div>
+          <h3>Domain Protection</h3>
+          <p>Monitor your primary domain and detect lookalike domains, typosquatting attempts, and homograph attacks in real-time.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </div>
+          <h3>Impersonation Detection</h3>
+          <p>Add trusted contacts to detect when someone impersonates a colleague, boss, or business partner using a different email address.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </div>
+          <h3>Real-time Scanning</h3>
+          <p>Emails are scanned instantly as they appear in your inbox. Get immediate warnings before you interact with suspicious content.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+          </div>
+          <h3>CSV Import</h3>
+          <p>Bulk import contacts and domains from CSV files. Perfect for teams and organizations with large contact lists.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
+          </div>
+          <h3>Gmail Integration</h3>
+          <p>Seamlessly integrates with Gmail. Works silently in the background and only alerts you when there's a genuine threat.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+              <path d="M12 16v-4"></path>
+              <path d="M12 8h.01"></path>
+            </svg>
+          </div>
+          <h3>Privacy First</h3>
+          <p>All detection happens locally in your browser. Your emails never leave your device — we don't see or store your data.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works Section -->
+  <section id="how-it-works" class="how-it-works">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">How It Works</span>
+        <h2 class="section-title">Protection in three simple steps</h2>
+        <p class="section-subtitle">Get started with Vervain in under a minute. No account required.</p>
+      </div>
+      
+      <div class="steps-container">
+        <div class="step">
+          <div class="step-number">01</div>
+          <div class="step-content">
+            <h3>Install the Extension</h3>
+            <p>Clone the repo, build with npm, and load the unpacked extension into Chrome.</p>
+          </div>
+          <div class="step-visual">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <div class="step-connector"></div>
+        
+        <div class="step">
+          <div class="step-number">02</div>
+          <div class="step-content">
+            <h3>Configure Your Protection</h3>
+            <p>Enter your domain and trusted contacts. Vervain generates hundreds of suspicious variations to watch for.</p>
+          </div>
+          <div class="step-visual">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <div class="step-connector"></div>
+        
+        <div class="step">
+          <div class="step-number">03</div>
+          <div class="step-content">
+            <h3>Stay Protected</h3>
+            <p>That's it! Vervain runs silently in the background, scanning every email and alerting you to phishing attempts and impersonation.</p>
+          </div>
+          <div class="step-visual">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <polyline points="9 12 11 14 15 10"></polyline>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Attack Types Section -->
+  <section class="attack-types">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Threat Intelligence</span>
+        <h2 class="section-title">Attacks Vervain detects</h2>
+        <p class="section-subtitle">Phishers use sophisticated techniques to trick you. Vervain knows them all.</p>
+      </div>
+      
+      <div class="attacks-grid">
+        <div class="attack-card">
+          <div class="attack-example">
+            <span class="attack-legit">google.com</span>
+            <span class="attack-arrow">→</span>
+            <span class="attack-fake">g<mark>0</mark><mark>0</mark>gle.com</span>
+          </div>
+          <h3>Homograph Attacks</h3>
+          <p>Using similar-looking characters (like 0 for o, or l for 1) to create domains that look identical at first glance.</p>
+        </div>
+        
+        <div class="attack-card">
+          <div class="attack-example">
+            <span class="attack-legit">company.com</span>
+            <span class="attack-arrow">→</span>
+            <span class="attack-fake">compan<mark>y</mark><mark>y</mark>.com</span>
+          </div>
+          <h3>Typosquatting</h3>
+          <p>Registering domains with common typos that users might accidentally type or not notice in emails.</p>
+        </div>
+        
+        <div class="attack-card">
+          <div class="attack-example">
+            <span class="attack-legit">bank.com</span>
+            <span class="attack-arrow">→</span>
+            <span class="attack-fake">bank<mark>-secure</mark>.com</span>
+          </div>
+          <h3>Domain Additions</h3>
+          <p>Adding words like "secure", "login", or "verify" to legitimate domains to create convincing fakes.</p>
+        </div>
+        
+        <div class="attack-card">
+          <div class="attack-example">
+            <span class="attack-legit">paypal.com</span>
+            <span class="attack-arrow">→</span>
+            <span class="attack-fake">paypal.com<mark>.fake.xyz</mark></span>
+          </div>
+          <h3>Subdomain Spoofing</h3>
+          <p>Using the real domain as a subdomain of an attacker-controlled domain to fool quick readers.</p>
+        </div>
+        
+        <div class="attack-card impersonation">
+          <div class="attack-example">
+            <span class="attack-legit">CEO: John Smith</span>
+            <span class="attack-arrow">→</span>
+            <span class="attack-fake"><mark>John Smith</mark> &lt;random@gmail.com&gt;</span>
+          </div>
+          <h3>User Impersonation</h3>
+          <p>Attackers using your colleague's display name from a completely different email address to request urgent wire transfers, gift cards, or sensitive data.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install Section -->
+  <section class="install">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Installation</span>
+        <h2 class="section-title">Get started in seconds</h2>
+        <p class="section-subtitle">Clone, build, and load into Chrome. It's that simple.</p>
+      </div>
+      
+      <div class="install-box">
+        <div class="install-step">
+          <span class="step-comment"># Clone the repository</span>
+          <code>$ git clone https://github.com/Remillardj/Vervain.git</code>
+        </div>
+        <div class="install-step">
+          <span class="step-comment"># Install dependencies and build</span>
+          <code>$ cd Vervain && npm install && npm run build</code>
+        </div>
+        <div class="install-step">
+          <span class="step-comment"># Load in Chrome</span>
+          <code>→ chrome://extensions → Load unpacked → Select dist/</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="cta">
+    <div class="container">
+      <div class="cta-content">
+        <h2>Start protecting your inbox today</h2>
+        <p>Vervain is free, open-source, and privacy-focused. Your emails never leave your browser.</p>
+        <a href="https://github.com/Remillardj/Vervain" class="btn btn-primary btn-large" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <a href="#" class="nav-logo">
+            <img src="vervain.png" alt="Vervain" class="logo-img">
+            <span class="logo-text">Vervain</span>
+          </a>
+          <p>Protecting your inbox from phishing attacks with intelligent domain monitoring and impersonation detection.</p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-column">
+            <h4>Product</h4>
+            <a href="#features">Features</a>
+            <a href="#how-it-works">How it Works</a>
+            <a href="https://github.com/Remillardj/Vervain" target="_blank">GitHub</a>
+          </div>
+          <div class="footer-column">
+            <h4>Resources</h4>
+            <a href="https://github.com/Remillardj/Vervain#readme" target="_blank">Documentation</a>
+            <a href="https://github.com/Remillardj/Vervain/issues" target="_blank">Report Issues</a>
+            <a href="mailto:jaryd.remillard@gmail.com">Contact</a>
+          </div>
+          <div class="footer-column">
+            <h4>More Tools</h4>
+            <a href="https://vesta.dev" target="_blank">Vesta</a>
+            <a href="https://certwatchdog.com" target="_blank">CertWatchdog</a>
+            <a href="https://bluesecurityops.com" target="_blank">Blue Security Ops</a>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© 2025 <a href="https://github.com/Remillardj" target="_blank">Jaryd Remillard</a>. Free for personal use.</p>
+        <p>A <a href="https://bluesecurityops.com" target="_blank">Blue Security Ops</a> project.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Mobile menu toggle
+    const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+    const mobileMenu = document.querySelector('.mobile-menu');
+    
+    mobileMenuBtn.addEventListener('click', () => {
+      mobileMenuBtn.classList.toggle('active');
+      mobileMenu.classList.toggle('active');
+    });
+
+    // Close mobile menu when clicking a link
+    document.querySelectorAll('.mobile-menu a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileMenuBtn.classList.remove('active');
+        mobileMenu.classList.remove('active');
+      });
+    });
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+      });
+    });
+
+    // Navbar background on scroll
+    const nav = document.querySelector('.nav');
+    window.addEventListener('scroll', () => {
+      if (window.scrollY > 50) {
+        nav.classList.add('scrolled');
+      } else {
+        nav.classList.remove('scrolled');
+      }
+    });
+
+    // Animate elements on scroll
+    const observerOptions = {
+      threshold: 0.1,
+      rootMargin: '0px 0px -50px 0px'
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('animate-in');
+        }
+      });
+    }, observerOptions);
+
+    document.querySelectorAll('.feature-card, .step, .attack-card').forEach(el => {
+      observer.observe(el);
+    });
+  </script>
+</body>
+</html>
