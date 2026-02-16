@@ -19,6 +19,10 @@ export interface UserDomainData {
   autoAddDomains?: boolean; // New configuration option for auto-adding domains
   alertsCount?: number; // Number of alerts shown
   lastUpdated?: number; // Timestamp of last update
+  aiProvider?: 'anthropic' | 'openai';
+  aiApiKey?: string;
+  aiModel?: string;
+  aiEnabled?: boolean;
 }
 
 // Default data
@@ -34,7 +38,11 @@ const defaultData: UserDomainData = {
   whitelistedDomains: [],
   lastUpdated: 0,
   additionalDomains: [],
-  trustedContacts: []
+  trustedContacts: [],
+  aiProvider: 'anthropic',
+  aiApiKey: '',
+  aiModel: 'claude-sonnet-4-5-20250929',
+  aiEnabled: false
 };
 
 // Save data to Chrome storage

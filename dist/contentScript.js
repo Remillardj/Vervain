@@ -1273,7 +1273,8 @@ function scanForPhishing() {
         const additionalDomains = settings.additionalDomains || [];
         const trustedContacts = settings.trustedContacts || [];
         const autoAddDomains = settings.autoAddDomains || false; // New configuration option
-        
+        const aiEnabled = settings.aiEnabled || false;
+
         console.log('[Vervain] Processing with settings:', {
           primaryDomain,
           variationsCount: variations.length,
@@ -1303,6 +1304,9 @@ function scanForPhishing() {
           console.log('[Vervain] Scanning for domain spoofing...');
           scanDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains);
         }
+
+        // Inject AI analysis button if enabled
+        maybeInjectAIButton({ aiEnabled });
       } catch (error) {
         console.error('[Vervain] Error processing settings:', error);
       }
@@ -1339,7 +1343,8 @@ function scanForPhishing() {
           "blockedDomains",
           "additionalDomains",
           "trustedContacts",
-          "autoAddDomains"
+          "autoAddDomains",
+          "aiEnabled"
         ], (settings) => {
           // Check for runtime errors
           if (chrome.runtime.lastError) {
@@ -1644,6 +1649,327 @@ function scanDomains(primaryDomain, variations, additionalDomains, whitelistedDo
       }
     }
   });
+}
+
+// --- AI Phishing Analysis ---
+
+// Extract email data from the currently open email view
+function extractEmailData() {
+  // Sender info - from the expanded email header
+  const senderEl = document.querySelector('.gD[email]');
+  const senderEmail = senderEl ? senderEl.getAttribute('email') : '';
+  const senderName = senderEl ? (senderEl.getAttribute('name') || senderEl.innerText || '') : '';
+
+  // Subject line
+  const subjectEl = document.querySelector('.hP');
+  const subject = subjectEl ? subjectEl.innerText : '';
+
+  // Body text - strip HTML, cap at 80k chars
+  // Clone the body element and remove Vervain-injected warnings so they
+  // don't contaminate the AI analysis (domain spoofing banners, warning
+  // icons, contact impersonation indicators, and AI result panels).
+  const bodyEl = document.querySelector('.a3s.aiL');
+  let body = '';
+  let truncated = false;
+  let originalLength = 0;
+  let cleanBodyEl = null;
+  if (bodyEl) {
+    cleanBodyEl = bodyEl.cloneNode(true);
+    cleanBodyEl.querySelectorAll(
+      '.phishguard-email-warning, .phishguard-contact-indicator, .phishguard-warning-icon, .vervain-ai-results, .vervain-ai-btn'
+    ).forEach(el => el.remove());
+
+    body = cleanBodyEl.innerText || '';
+    originalLength = body.length;
+    if (body.length > 80000) {
+      body = body.substring(0, 80000);
+      truncated = true;
+    }
+  }
+
+  // URLs - extract from links in the email body (using cleaned clone)
+  const urls = [];
+  if (cleanBodyEl) {
+    const links = cleanBodyEl.querySelectorAll('a[href]');
+    links.forEach(link => {
+      const href = link.getAttribute('href');
+      if (href && !href.startsWith('mailto:') && !href.startsWith('#')) {
+        urls.push(href);
+      }
+    });
+  }
+
+  return { senderName, senderEmail, subject, body, urls, truncated, originalLength };
+}
+
+// Build the results panel HTML
+function buildResultsPanelHTML(result) {
+  const { confidence, label, pushed, verify, reasoning } = result;
+
+  // Color based on label
+  let color, bgColor, borderColor, barColor;
+  if (label === 'safe') {
+    color = '#15803d'; bgColor = '#f0fdf4'; borderColor = '#86efac'; barColor = '#22c55e';
+  } else if (label === 'caution') {
+    color = '#a16207'; bgColor = '#fefce8'; borderColor = '#fde047'; barColor = '#eab308';
+  } else {
+    color = '#dc2626'; bgColor = '#fef2f2'; borderColor = '#fca5a5'; barColor = '#ef4444';
+  }
+
+  // PUSHED indicators
+  const pushedKeys = [
+    { key: 'pressure', label: 'Pressure' },
+    { key: 'urgency', label: 'Urgency' },
+    { key: 'surprise', label: 'Surprise' },
+    { key: 'highStakes', label: 'High-stakes' },
+    { key: 'excitement', label: 'Excitement' },
+    { key: 'desperation', label: 'Desperation' }
+  ];
+
+  const detectedPushed = pushedKeys.filter(p => pushed[p.key]?.detected);
+  const notDetectedPushed = pushedKeys.filter(p => !pushed[p.key]?.detected);
+
+  let pushedHTML = '';
+  detectedPushed.forEach(p => {
+    const evidence = pushed[p.key].evidence || '';
+    pushedHTML += `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
+      <span style="color:${color};font-weight:600;flex-shrink:0;">&#9679;</span>
+      <span><strong>${p.label}</strong>${evidence ? ' — ' + evidence : ''}</span>
+    </div>`;
+  });
+  if (notDetectedPushed.length > 0) {
+    pushedHTML += `<div style="color:#94a3b8;margin-top:4px;">`;
+    pushedHTML += notDetectedPushed.map(p => `&#9675; ${p.label}`).join('&nbsp;&nbsp;');
+    pushedHTML += `</div>`;
+  }
+
+  // VERIFY flags
+  let verifyHTML = '';
+  if (verify && verify.length > 0) {
+    verify.forEach(v => {
+      const icon = v.status === 'warning'
+        ? `<span style="color:${color};font-weight:bold;">!</span>`
+        : `<span style="color:#22c55e;font-weight:bold;">&#10003;</span>`;
+      verifyHTML += `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
+        ${icon} <span>${v.detail}</span>
+      </div>`;
+    });
+  }
+
+  return `
+    <div style="font-family:'Google Sans',Roboto,Arial,sans-serif;font-size:13px;color:#334155;background:${bgColor};border:1px solid ${borderColor};border-radius:8px;padding:16px;margin:8px 0 12px 0;position:relative;z-index:100;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="font-weight:600;font-size:14px;color:${color};">AI Phishing Analysis</div>
+        <button class="vervain-ai-collapse" style="background:none;border:none;cursor:pointer;color:#94a3b8;font-size:18px;padding:0 4px;" title="Collapse">&#9650;</button>
+      </div>
+      <div class="vervain-ai-panel-body">
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <span style="font-weight:600;">Confidence:</span>
+            <div style="flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;">
+              <div style="width:${confidence}%;height:100%;background:${barColor};border-radius:4px;"></div>
+            </div>
+            <span style="font-weight:700;color:${color};">${confidence}% — ${label.charAt(0).toUpperCase() + label.slice(1)}</span>
+          </div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:6px;">PUSHED Indicators:</div>
+          ${pushedHTML}
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-weight:600;margin-bottom:6px;">VERIFY Flags:</div>
+          ${verifyHTML}
+        </div>
+        <div style="background:rgba(0,0,0,0.03);border-radius:6px;padding:10px;font-style:italic;line-height:1.5;">
+          "${reasoning}"
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Show the results panel below the email header
+function showAIResultsPanel(result) {
+  isModifyingDOM = true;
+  try {
+    // Remove any existing panel
+    const existing = document.querySelector('.vervain-ai-results');
+    if (existing) existing.remove();
+
+    // Find the email header area - try multiple selectors
+    const headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    if (!headerArea) {
+      console.error('[Vervain] Could not find email header area for results panel');
+      return;
+    }
+
+    const panel = document.createElement('div');
+    panel.className = 'vervain-ai-results';
+    panel.innerHTML = buildResultsPanelHTML(result);
+
+    // Insert after the header
+    headerArea.parentNode.insertBefore(panel, headerArea.nextSibling);
+
+    // Wire collapse/expand toggle
+    const collapseBtn = panel.querySelector('.vervain-ai-collapse');
+    const body = panel.querySelector('.vervain-ai-panel-body');
+    if (collapseBtn && body) {
+      collapseBtn.addEventListener('click', () => {
+        const collapsed = body.style.display === 'none';
+        body.style.display = collapsed ? '' : 'none';
+        collapseBtn.innerHTML = collapsed ? '&#9650;' : '&#9660;';
+        collapseBtn.title = collapsed ? 'Collapse' : 'Expand';
+      });
+    }
+  } finally {
+    isModifyingDOM = false;
+  }
+}
+
+// Show an error in the results panel area
+function showAIError(message) {
+  isModifyingDOM = true;
+  try {
+    const existing = document.querySelector('.vervain-ai-results');
+    if (existing) existing.remove();
+
+    const headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    if (!headerArea) return;
+
+    const panel = document.createElement('div');
+    panel.className = 'vervain-ai-results';
+    panel.innerHTML = `
+      <div style="font-family:'Google Sans',Roboto,Arial,sans-serif;font-size:13px;color:#dc2626;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin:8px 0 12px 0;">
+        <strong>Analysis failed:</strong> ${message}
+      </div>
+    `;
+    headerArea.parentNode.insertBefore(panel, headerArea.nextSibling);
+  } finally {
+    isModifyingDOM = false;
+  }
+}
+
+// Handle the "Analyze with AI" button click
+async function handleAIAnalyze(button) {
+  // Update button to loading state
+  button.disabled = true;
+  button.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:vervain-spin 1s linear infinite;flex-shrink:0;">
+      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+    </svg>
+    <span>Analyzing...</span>
+  `;
+
+  try {
+    const emailData = extractEmailData();
+
+    if (!emailData.senderEmail && !emailData.body) {
+      showAIError('Could not extract email content. Please open an email first.');
+      return;
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'AI_ANALYZE',
+      data: emailData
+    });
+
+    if (response.success) {
+      showAIResultsPanel(response.result);
+      // Update button to show score
+      const result = response.result;
+      let badgeColor;
+      if (result.label === 'safe') badgeColor = '#22c55e';
+      else if (result.label === 'caution') badgeColor = '#eab308';
+      else badgeColor = '#ef4444';
+
+      button.innerHTML = `
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${badgeColor};color:white;font-size:11px;font-weight:700;flex-shrink:0;">${result.confidence}</span>
+        <span>${result.label.charAt(0).toUpperCase() + result.label.slice(1)}</span>
+      `;
+      button.disabled = false;
+    } else {
+      if (response.error === 'NO_API_KEY') {
+        showAIError('No API key configured. <a href="' + chrome.runtime.getURL('options.html') + '#ai" target="_blank" style="color:#4B2EE3;text-decoration:underline;">Configure AI in extension settings</a>');
+      } else {
+        showAIError(response.error || 'Unknown error occurred');
+      }
+      // Reset button
+      resetAIButton(button);
+    }
+  } catch (error) {
+    console.error('[Vervain] AI analysis error:', error);
+    showAIError('Analysis failed — try again');
+    resetAIButton(button);
+  }
+}
+
+function resetAIButton(button) {
+  button.disabled = false;
+  button.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    <span>Analyze with AI</span>
+  `;
+}
+
+// Inject the "Analyze with AI" button near the sender info
+function injectAIButton() {
+  // Only inject in email view (when a single email is open)
+  const senderEl = document.querySelector('.gD[email]');
+  if (!senderEl) return;
+
+  // Don't inject if button already exists in this email view
+  if (document.querySelector('.vervain-ai-btn')) return;
+
+  // Find the sender info row — the parent that contains sender name/email
+  // Gmail uses .gE for the header area of an open email
+  const headerRow = senderEl.closest('.gE') || senderEl.closest('tr') || senderEl.parentElement;
+  if (!headerRow) return;
+
+  const button = document.createElement('button');
+  button.className = 'vervain-ai-btn';
+  button.style.cssText = `
+    display:inline-flex;align-items:center;gap:4px;
+    padding:4px 10px;margin-left:8px;
+    background:#f8f7ff;color:#4B2EE3;
+    border:1px solid #d4d0f7;border-radius:14px;
+    font-family:'Google Sans',Roboto,Arial,sans-serif;
+    font-size:12px;font-weight:500;cursor:pointer;
+    white-space:nowrap;vertical-align:middle;
+    transition:background 0.15s;
+  `;
+  button.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    <span>Analyze with AI</span>
+  `;
+  button.addEventListener('mouseenter', () => { button.style.background = '#eeeaff'; });
+  button.addEventListener('mouseleave', () => { button.style.background = '#f8f7ff'; });
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleAIAnalyze(button);
+  });
+
+  // Add the spinner keyframe animation if not already added
+  if (!document.querySelector('#vervain-ai-styles')) {
+    const style = document.createElement('style');
+    style.id = 'vervain-ai-styles';
+    style.textContent = `@keyframes vervain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+    document.head.appendChild(style);
+  }
+
+  // Insert the button next to the sender element
+  headerRow.appendChild(button);
+}
+
+// Check if AI is enabled and inject button if so
+function maybeInjectAIButton(settings) {
+  if (settings && settings.aiEnabled) {
+    injectAIButton();
+  }
 }
 
 // Clear dismissed warnings only on fresh page load (not on every scan)

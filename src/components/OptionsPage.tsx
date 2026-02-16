@@ -5,13 +5,27 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User } from 'lucide-react';
+import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import TrustedContactsManager from './TrustedContactsManager';
 import DomainsCSVImport from './DomainsCSVImport';
+
+const AI_MODELS: Record<string, Array<{ value: string; label: string }>> = {
+  anthropic: [
+    { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  ],
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'gpt-5.2', label: 'GPT-5.2' },
+  ],
+};
 
 const OptionsPage = () => {
   const [primaryDomain, setPrimaryDomain] = useState('');
@@ -24,6 +38,11 @@ const OptionsPage = () => {
   const { toast } = useToast();
   const [autoAddDomains, setAutoAddDomains] = useState(false); // New state for auto-add domains
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiProvider, setAiProvider] = useState<'anthropic' | 'openai'>('anthropic');
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiModel, setAiModel] = useState('claude-sonnet-4-5-20250929');
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -45,6 +64,10 @@ const OptionsPage = () => {
       }
 
       setAutoAddDomains(data.autoAddDomains || false); // Load auto-add domains setting
+      setAiEnabled(data.aiEnabled || false);
+      setAiProvider(data.aiProvider || 'anthropic');
+      setAiApiKey(data.aiApiKey || '');
+      setAiModel(data.aiModel || 'claude-sonnet-4-5-20250929');
     } catch (error) {
       showToast('Failed to load settings', 'error');
     }
@@ -223,6 +246,48 @@ const OptionsPage = () => {
     }
   };
 
+  const handleToggleAiEnabled = async () => {
+    try {
+      const newState = !aiEnabled;
+      await saveData({ aiEnabled: newState });
+      setAiEnabled(newState);
+      showToast(newState ? 'AI analysis enabled' : 'AI analysis disabled', 'success');
+    } catch (error) {
+      showToast('Failed to update AI setting', 'error');
+    }
+  };
+
+  const handleChangeAiProvider = async (value: 'anthropic' | 'openai') => {
+    try {
+      const defaultModel = AI_MODELS[value][0].value;
+      await saveData({ aiProvider: value, aiModel: defaultModel });
+      setAiProvider(value);
+      setAiModel(defaultModel);
+      showToast('AI provider updated', 'success');
+    } catch (error) {
+      showToast('Failed to update AI provider', 'error');
+    }
+  };
+
+  const handleChangeAiModel = async (value: string) => {
+    try {
+      await saveData({ aiModel: value });
+      setAiModel(value);
+      showToast('AI model updated', 'success');
+    } catch (error) {
+      showToast('Failed to update AI model', 'error');
+    }
+  };
+
+  const handleSaveAiApiKey = async () => {
+    try {
+      await saveData({ aiApiKey: aiApiKey });
+      showToast('API key saved', 'success');
+    } catch (error) {
+      showToast('Failed to save API key', 'error');
+    }
+  };
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-4xl">
       <header className="mb-8 text-center">
@@ -243,18 +308,22 @@ const OptionsPage = () => {
         value={activeTab} 
         onValueChange={setActiveTab}
       >
-        <TabsList className="grid w-full grid-cols-3 mb-8">
+        <TabsList className="grid w-full grid-cols-4 mb-8">
           <TabsTrigger value="general" className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
-            <span>General Settings</span>
+            <span>General</span>
           </TabsTrigger>
           <TabsTrigger value="domains" className="flex items-center gap-2">
             <Globe className="h-4 w-4" />
-            <span>Domain Management</span>
+            <span>Domains</span>
           </TabsTrigger>
           <TabsTrigger value="contacts" className="flex items-center gap-2">
             <User className="h-4 w-4" />
-            <span>Trusted Contacts</span>
+            <span>Contacts</span>
+          </TabsTrigger>
+          <TabsTrigger value="ai" className="flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            <span>AI Analysis</span>
           </TabsTrigger>
         </TabsList>
         
@@ -477,7 +546,7 @@ const OptionsPage = () => {
 
         <TabsContent value="contacts" className="space-y-6">
           <TrustedContactsManager />
-          
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -500,6 +569,119 @@ const OptionsPage = () => {
                 </p>
                 <p className="mt-4">
                   <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple contacts from a spreadsheet.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ai" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Brain className="h-5 w-5 text-[#4B2EE3]" />
+                AI Phishing Analysis
+              </CardTitle>
+              <CardDescription>
+                Use AI to analyze emails for phishing indicators using the PUSHED and VERIFY frameworks
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h4 className="font-medium">Enable AI Analysis</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Show "Analyze with AI" button on emails in Gmail
+                  </p>
+                </div>
+                <Switch
+                  checked={aiEnabled}
+                  onCheckedChange={handleToggleAiEnabled}
+                  aria-label="Toggle AI analysis"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ai-provider">Provider</Label>
+                <Select value={aiProvider} onValueChange={handleChangeAiProvider}>
+                  <SelectTrigger id="ai-provider">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                    <SelectItem value="openai">OpenAI GPT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ai-model">Model</Label>
+                <Select value={aiModel} onValueChange={handleChangeAiModel}>
+                  <SelectTrigger id="ai-model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AI_MODELS[aiProvider].map((model) => (
+                      <SelectItem key={model.value} value={model.value}>
+                        {model.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ai-api-key">API Key</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="ai-api-key"
+                      type={showApiKey ? 'text' : 'password'}
+                      value={aiApiKey}
+                      onChange={(e) => setAiApiKey(e.target.value)}
+                      placeholder={aiProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button onClick={handleSaveAiApiKey} disabled={isProcessing}>
+                    Save Key
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Your API key is stored locally and never sent anywhere except the provider's API.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5 text-[#4B2EE3]" />
+                How It Works
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm space-y-2">
+                <p>
+                  When you click "Analyze with AI" on an email in Gmail, Vervain sends the email content to your configured AI provider for analysis using two frameworks:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li><strong>PUSHED</strong> — Detects emotional manipulation: Pressure, Urgency, Surprise, High-stakes, Excitement, Desperation</li>
+                  <li><strong>VERIFY</strong> — Checks technical indicators: sender legitimacy, link safety, attachment risks, and sensitive data requests</li>
+                </ul>
+                <p className="mt-2">
+                  You'll receive a confidence score (0-100) and detailed breakdown of any suspicious indicators found.
+                </p>
+                <p className="mt-2 text-muted-foreground">
+                  Note: You provide your own API key. Standard API usage charges from your provider apply.
                 </p>
               </div>
             </CardContent>
