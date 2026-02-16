@@ -155,9 +155,6 @@
           </div>
         </div>
       </div>
-      <div class="hero-screenshot-overlay">
-        <img src="vervainaianalyzeouput.png" alt="AI Phishing Analysis showing confidence score, PUSHED indicators, and VERIFY flags" class="hero-screenshot-img">
-      </div>
     </div>
   </header>
 
@@ -186,10 +183,63 @@
                 </svg>
               </div>
               <h3>AI Phishing Analysis</h3>
-              <p>Go beyond pattern matching. Analyze emails with AI using the PUSHED and VERIFY frameworks — detecting pressure tactics, urgency cues, spelling anomalies, and more. Bring your own API key from OpenAI, Anthropic, or Google.</p>
+              <p>Go beyond pattern matching. Analyze emails with AI using the <a href="https://bluesecurityops.com/security%20awareness/phishing%20defense/2025/11/11/when-you're-done-feeling-pushed-verify-before-you-reply" target="_blank">PUSHED and VERIFY frameworks</a> — detecting pressure tactics, urgency cues, spelling anomalies, and more. Bring your own API key from OpenAI, Anthropic, or Google.</p>
             </div>
             <div class="featured-visual">
-              <img src="vervainaianalyzesettings.png" alt="AI Analysis settings showing provider selection, model choice, and API key configuration" class="featured-screenshot">
+              <div class="ai-mockup">
+                <div class="ai-mockup-header">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                  </svg>
+                  <span>AI Phishing Analysis</span>
+                </div>
+                <div class="ai-mockup-confidence">
+                  <span class="confidence-label">Confidence:</span>
+                  <div class="confidence-bar">
+                    <div class="confidence-fill danger" style="width: 85%"></div>
+                  </div>
+                  <span class="confidence-value danger">85% — Phishing</span>
+                </div>
+                <div class="ai-mockup-pushed">
+                  <span class="pushed-label">PUSHED Indicators:</span>
+                  <div class="pushed-tags">
+                    <span class="pushed-tag active">Pressure</span>
+                    <span class="pushed-tag active">Urgency</span>
+                    <span class="pushed-tag">Surprise</span>
+                    <span class="pushed-tag active">High-stakes</span>
+                    <span class="pushed-tag">Excitement</span>
+                    <span class="pushed-tag active">Desperation</span>
+                  </div>
+                </div>
+                <div class="ai-mockup-verify">
+                  <span class="verify-label">VERIFY Flags:</span>
+                  <div class="verify-flags">
+                    <div class="verify-flag fail">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      Sender domain does not match expected domain
+                    </div>
+                    <div class="verify-flag fail">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      URLs redirect to suspicious external domains
+                    </div>
+                    <div class="verify-flag fail">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      Requests password and account credentials
+                    </div>
+                    <div class="verify-flag fail">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      Multiple grammar and spelling errors detected
+                    </div>
+                    <div class="verify-flag">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      Branding appears consistent
+                    </div>
+                  </div>
+                </div>
+                <div class="ai-mockup-summary">
+                  "This email is highly likely to be a phishing attempt. The sender domain does not match the claimed organization, URLs redirect to external sites, and the email pressures the recipient to act immediately with threats of account suspension."
+                </div>
+              </div>
             </div>
           </div>
         </div>
