@@ -576,6 +576,26 @@ body {
   color: var(--color-danger);
 }
 
+/* === Hero Screenshot Overlay === */
+.hero-screenshot-overlay {
+  position: relative;
+  margin-top: -40px;
+  margin-left: 40px;
+  z-index: 2;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg), 0 0 40px rgba(75, 46, 227, 0.2);
+  animation: float-slow 6s ease-in-out infinite reverse;
+}
+
+.hero-screenshot-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+}
+
 /* === Section Styles === */
 section {
   padding: 120px 0;
@@ -675,6 +695,48 @@ section {
   line-height: 1.6;
 }
 
+/* === Featured AI Card === */
+.feature-card.featured {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(75, 46, 227, 0.08) 0%, rgba(0, 229, 160, 0.05) 100%);
+  border-color: rgba(75, 46, 227, 0.3);
+}
+
+.feature-card.featured:hover {
+  border-color: var(--color-primary-light);
+}
+
+.featured-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+}
+
+.featured-text h3 {
+  font-size: 1.5rem;
+  margin-bottom: 12px;
+}
+
+.featured-text p {
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+  font-size: 1.05rem;
+}
+
+.featured-visual {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+}
+
+.featured-screenshot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
 
 /* === How It Works === */
 .steps-container {
@@ -1034,6 +1096,11 @@ section {
   .feature-card.featured {
     grid-row: auto;
   }
+
+  .hero-screenshot-overlay {
+    margin-top: -20px;
+    margin-left: 20px;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1105,6 +1172,16 @@ section {
     flex-direction: column;
     gap: 12px;
     text-align: center;
+  }
+
+  .hero-screenshot-overlay {
+    margin-top: -15px;
+    margin-left: 10px;
+  }
+
+  .featured-content {
+    grid-template-columns: 1fr;
+    gap: 24px;
   }
 }
 
