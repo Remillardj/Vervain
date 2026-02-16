@@ -1242,7 +1242,12 @@ function scanForPhishing() {
           console.log('[Vervain] No settings available');
           return;
         }
-        
+
+        // Inject AI button early — it should appear on any open email
+        // regardless of domain/contact setup or detection toggles
+        const aiEnabled = settings.aiEnabled || false;
+        maybeInjectAIButton({ aiEnabled });
+
         // Only require setup completion for domain scanning, not trusted contact scanning
         if (!settings.setupComplete && (!settings.trustedContacts || settings.trustedContacts.length === 0)) {
           console.log('[Vervain] Setup not complete and no trusted contacts configured');
@@ -1273,7 +1278,6 @@ function scanForPhishing() {
         const additionalDomains = settings.additionalDomains || [];
         const trustedContacts = settings.trustedContacts || [];
         const autoAddDomains = settings.autoAddDomains || false; // New configuration option
-        const aiEnabled = settings.aiEnabled || false;
 
         console.log('[Vervain] Processing with settings:', {
           primaryDomain,
@@ -1305,8 +1309,6 @@ function scanForPhishing() {
           scanDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains);
         }
 
-        // Inject AI analysis button if enabled
-        maybeInjectAIButton({ aiEnabled });
       } catch (error) {
         console.error('[Vervain] Error processing settings:', error);
       }

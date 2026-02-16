@@ -1242,7 +1242,12 @@ function scanForPhishing() {
           console.log('[Vervain] No settings available');
           return;
         }
-        
+
+        // Inject AI button early — it should appear on any open email
+        // regardless of domain/contact setup or detection toggles
+        const aiEnabled = settings.aiEnabled || false;
+        maybeInjectAIButton({ aiEnabled });
+
         // Only require setup completion for domain scanning, not trusted contact scanning
         if (!settings.setupComplete && (!settings.trustedContacts || settings.trustedContacts.length === 0)) {
           console.log('[Vervain] Setup not complete and no trusted contacts configured');
@@ -1257,7 +1262,7 @@ function scanForPhishing() {
           console.log('[Vervain] All detection disabled');
           return;
         }
-        
+
         // Only initialize dismissed warnings sets if they don't exist (don't clear on every scan)
         if (!window.phishguardDismissedWarnings) {
           window.phishguardDismissedWarnings = new Set();
@@ -1265,7 +1270,7 @@ function scanForPhishing() {
         if (!window.phishguardDismissedSpoofedWarnings) {
           window.phishguardDismissedSpoofedWarnings = new Set();
         }
-        
+
         const primaryDomain = settings.primaryDomain || '';
         const variations = settings.variations || [];
         const whitelistedDomains = settings.whitelistedDomains || [];
@@ -1273,7 +1278,6 @@ function scanForPhishing() {
         const additionalDomains = settings.additionalDomains || [];
         const trustedContacts = settings.trustedContacts || [];
         const autoAddDomains = settings.autoAddDomains || false; // New configuration option
-        const aiEnabled = settings.aiEnabled || false;
 
         console.log('[Vervain] Processing with settings:', {
           primaryDomain,
@@ -1284,15 +1288,15 @@ function scanForPhishing() {
           trustedContactsCount: trustedContacts.length,
           autoAddDomains: autoAddDomains
         });
-        
+
         // Don't scan if no valid domains or trusted contacts are configured
-        if ((!primaryDomain || primaryDomain === '') && 
+        if ((!primaryDomain || primaryDomain === '') &&
             (!additionalDomains || additionalDomains.length === 0) &&
             (!trustedContacts || trustedContacts.length === 0)) {
           console.log('[Vervain] No valid domains or trusted contacts configured to protect');
           return;
         }
-        
+
         // Run trusted contacts check if enabled and we have contacts configured
         if (contactDetectionEnabled && trustedContacts && trustedContacts.length > 0) {
           console.log('[Vervain] Scanning for trusted contact spoofing...');
@@ -1305,8 +1309,6 @@ function scanForPhishing() {
           scanDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains);
         }
 
-        // Inject AI analysis button if enabled
-        maybeInjectAIButton({ aiEnabled });
       } catch (error) {
         console.error('[Vervain] Error processing settings:', error);
       }
