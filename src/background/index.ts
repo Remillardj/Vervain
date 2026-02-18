@@ -1,6 +1,6 @@
 // Background script for the Vervain extension
 
-import { AI_SYSTEM_PROMPT, buildUserMessage } from './aiPrompt.js';
+import { AI_SYSTEM_PROMPT, buildUserMessage, EmailData } from './aiPrompt';
 
 // Listen for installation
 chrome.runtime.onInstalled.addListener((details) => {
@@ -12,7 +12,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // --- AI Analysis API calls ---
 
-async function callAnthropicAPI(apiKey, model, systemPrompt, userMessage) {
+async function callAnthropicAPI(apiKey: string, model: string, systemPrompt: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -41,7 +41,7 @@ async function callAnthropicAPI(apiKey, model, systemPrompt, userMessage) {
   return data.content[0].text;
 }
 
-async function callOpenAIAPI(apiKey, model, systemPrompt, userMessage) {
+async function callOpenAIAPI(apiKey: string, model: string, systemPrompt: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -71,7 +71,7 @@ async function callOpenAIAPI(apiKey, model, systemPrompt, userMessage) {
   return data.choices[0].message.content;
 }
 
-function parseAIResponse(responseText) {
+function parseAIResponse(responseText: string): Record<string, unknown> {
   // Strip markdown code fences if present
   let cleaned = responseText.trim();
   if (cleaned.startsWith('```')) {
@@ -80,7 +80,7 @@ function parseAIResponse(responseText) {
   return JSON.parse(cleaned);
 }
 
-async function handleAIAnalyze(emailData) {
+async function handleAIAnalyze(emailData: EmailData): Promise<Record<string, unknown>> {
   // Read AI settings from storage
   const settings = await chrome.storage.local.get(['aiEnabled', 'aiProvider', 'aiApiKey', 'aiModel']);
 
@@ -95,7 +95,7 @@ async function handleAIAnalyze(emailData) {
   const provider = settings.aiProvider || 'anthropic';
   const model = settings.aiModel || 'claude-sonnet-4-5-20250929';
 
-  let responseText;
+  let responseText: string;
   if (provider === 'anthropic') {
     responseText = await callAnthropicAPI(settings.aiApiKey, model, AI_SYSTEM_PROMPT, userMessage);
   } else {
@@ -118,7 +118,7 @@ async function handleAIAnalyze(emailData) {
 }
 
 // Listen for messages from content script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "PHISHING_DETECTED") {
     // Update badge to show there's a phishing attempt
     chrome.action.setBadgeText({ text: "!" });
@@ -126,7 +126,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // Increment the alerts count
     chrome.storage.local.get(["alertsCount"], (result) => {
-      const count = (result.alertsCount || 0) + 1;
+      const count = ((result.alertsCount as number) || 0) + 1;
       chrome.storage.local.set({ alertsCount: count });
     });
 

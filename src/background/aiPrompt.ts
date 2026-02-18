@@ -49,7 +49,17 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 
 Only include VERIFY flags that are relevant to this specific email. Be thorough but avoid false positives. Base your analysis on concrete evidence from the email content.`;
 
-export function buildUserMessage(emailData) {
+export interface EmailData {
+  senderName: string;
+  senderEmail: string;
+  subject: string;
+  body: string;
+  urls?: string[];
+  truncated?: boolean;
+  originalLength?: number;
+}
+
+export function buildUserMessage(emailData: EmailData): string {
   let message = `Analyze this email for phishing indicators:\n\n`;
   message += `**From:** ${emailData.senderName} <${emailData.senderEmail}>\n`;
   message += `**Subject:** ${emailData.subject}\n\n`;
