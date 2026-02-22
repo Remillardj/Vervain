@@ -2,15 +2,24 @@
 /**
  * CLI tool to analyze .eml files through Vervain's AI analyzer.
  *
- * Usage:
+ * Single file:
  *   npx tsx scripts/analyze-eml.ts <file.eml>
+ *
+ * Small batch:
  *   npx tsx scripts/analyze-eml.ts --batch <directory>
+ *
+ * Large evaluation with stats:
+ *   npx tsx scripts/analyze-eml.ts --batch <dir> --manifest <csv> --concurrency 10 --report out.json
  *
  * Flags:
  *   --provider anthropic|openai   (default: anthropic)
  *   --model <model-id>            (default: provider's cheapest)
  *   --verbose                     Show full JSON response
  *   --compare                     Compare against .meta.json expectations
+ *   --manifest <csv>              CSV with file,expected_label columns
+ *   --concurrency <N>             Parallel API calls (default: 5)
+ *   --report <path>               Save full results + stats as JSON
+ *   --no-cache                    Ignore cached results
  *
  * Requires ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
  */

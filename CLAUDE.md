@@ -43,6 +43,45 @@ Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` depending on provider.
 
 Test fixtures live in `test-fixtures/eml/` — drop `.eml` files in `synthetic/`, `phishing/`, or `legitimate/`.
 
+### Batch Evaluation
+
+Run the AI analyzer against large email corpora with statistical reporting:
+
+```bash
+# Full evaluation with manifest and report
+ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts \
+  --batch test-fixtures/eml/ \
+  --manifest test-fixtures/eml/manifest.csv \
+  --concurrency 10 \
+  --report results/run.json
+
+# Resume an interrupted run (cached results reused automatically)
+ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts \
+  --batch test-fixtures/eml/ --manifest manifest.csv
+
+# Force re-analyze, ignoring cache
+ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts \
+  --batch test-fixtures/eml/ --manifest manifest.csv --no-cache
+
+# OpenAI provider
+OPENAI_API_KEY=<key> npx tsx scripts/analyze-eml.ts \
+  --batch test-fixtures/eml/ --manifest manifest.csv --provider openai
+```
+
+**Manifest CSV** maps files to expected labels (`file` relative to batch dir):
+
+```csv
+file,expected_label
+phishing/paypal-reset.eml,suspicious
+legitimate/github-notification.eml,safe
+```
+
+Optional columns: `expected_score_min`, `expected_score_max`, `expected_pushed`.
+
+Cache lives in `<batch-dir>/.vervain-cache/<model>_<prompt-hash>/` and auto-invalidates on prompt changes.
+
+Report includes: confusion matrix, precision/recall/F1, threshold sweep, per-flag breakdown, latency percentiles, and cost estimate.
+
 ## Architecture
 
 ### Multi-Page Chrome Extension
