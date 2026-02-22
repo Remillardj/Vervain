@@ -5,15 +5,29 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff, Shield, Lock, RefreshCw } from 'lucide-react';
+import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff, Shield, Lock, RefreshCw, HelpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import TrustedContactsManager from './TrustedContactsManager';
 import DomainsCSVImport from './DomainsCSVImport';
+
+const InfoTip = ({ children }: { children: React.ReactNode }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <button type="button" className="text-muted-foreground hover:text-foreground inline-flex">
+        <HelpCircle className="h-4 w-4" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom" className="max-w-xs text-sm">
+      {children}
+    </TooltipContent>
+  </Tooltip>
+);
 
 const AI_MODELS: Record<string, Array<{ value: string; label: string }>> = {
   anthropic: [
@@ -362,6 +376,7 @@ const OptionsPage = () => {
   const isLocked = (key: string) => lockedKeys.has(key);
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="container mx-auto py-8 px-4 max-w-4xl">
       <header className="mb-8 text-center">
         <div className="flex flex-col items-center space-y-4 text-center">
@@ -537,8 +552,12 @@ const OptionsPage = () => {
                 <Plus className="h-5 w-5 text-[#4B2EE3]" />
                 Additional Domains
               </CardTitle>
-              <CardDescription>
+              <CardDescription className="flex items-center gap-1.5">
                 Add other domains you want to monitor for phishing attempts
+                <InfoTip>
+                  <p>For each domain, Vervain monitors for look-alike domains, typosquatting, and homoglyph attacks.</p>
+                  <p className="mt-1">Use CSV Import below to add multiple domains from a spreadsheet.</p>
+                </InfoTip>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -620,33 +639,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
           
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                Important Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  For each additional domain you add, Vervain will monitor for:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Look-alike domains that may be used in phishing attempts</li>
-                  <li>Typosquatting variations of the domain name</li>
-                  <li>Domains that use homoglyphs or special characters to mimic your domain</li>
-                </ul>
-                <p className="mt-4">
-                  Adding too many domains may affect performance. Focus on your most important domains.
-                </p>
-                <p className="mt-4">
-                  <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple domains from a spreadsheet.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* CSV Import Manager for Domains */}
           <DomainsCSVImport
             onDomainsImport={handleDomainsImport}
@@ -656,33 +648,6 @@ const OptionsPage = () => {
 
         <TabsContent value="contacts" className="space-y-6">
           <TrustedContactsManager />
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                About Trusted Contacts
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  Adding trusted contacts helps Vervain protect you from impersonation attacks:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Vervain will flag emails where someone uses a trusted contact's name but with a different email address</li>
-                  <li>This helps you detect when attackers try to impersonate people you know and trust</li>
-                  <li>The system compares both the display name and email address to detect spoofing attempts</li>
-                </ul>
-                <p>
-                  Add contacts that frequently email you and who might be targets for impersonation, such as colleagues, managers, or service providers.
-                </p>
-                <p className="mt-4">
-                  <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple contacts from a spreadsheet.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="threatintel" className="space-y-6">
@@ -690,33 +655,20 @@ const OptionsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5 text-[#4B2EE3]" />
-                Known Threat Checking
+                Known Threats
               </CardTitle>
-              <CardDescription>
-                Check sender domains against databases of known phishing and malware sites
+              <CardDescription className="flex items-center gap-1.5">
+                Vervain automatically checks every sender against known phishing and malware databases
+                <InfoTip>
+                  <p className="font-medium mb-1">How it works</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><strong>Quick check</strong> — Fast lookup against known threat databases (milliseconds)</li>
+                    <li><strong>Confirmation</strong> — If a match is found, Vervain double-checks with the original source</li>
+                  </ul>
+                  <p className="mt-1.5">Databases refresh automatically. All data stays on your device.</p>
+                </InfoTip>
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <h4 className="font-medium">Enable known threat checking</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically check every email's sender domain against known malicious site databases
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isLocked('tiAutoScan') && (
-                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
-                  )}
-                  <Switch
-                    checked={autoTI}
-                    onCheckedChange={handleToggleAutoTI}
-                    disabled={isLocked('tiAutoScan')}
-                    aria-label="Toggle known threat checking"
-                  />
-                </div>
-              </div>
-            </CardContent>
           </Card>
 
           <Card>
@@ -767,29 +719,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5 text-[#4B2EE3]" />
-                How Known Threats Checking Works
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  Vervain checks sender domains against multiple databases of known malicious sites:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>Quick check</strong> — A fast lookup against known threat databases (runs in milliseconds)</li>
-                  <li><strong>Confirmation</strong> — If a match is found, Vervain double-checks with the original source</li>
-                  <li><strong>VirusTotal</strong> — Additional reputation scoring and domain age analysis (optional)</li>
-                </ul>
-                <p className="mt-2">
-                  Databases refresh automatically in the background. All data is stored locally on your device.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="ai" className="space-y-6">
@@ -797,18 +726,27 @@ const OptionsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Brain className="h-5 w-5 text-[#4B2EE3]" />
-                AI Phishing Analysis
+                VERIFY My Suspicious
               </CardTitle>
-              <CardDescription>
-                Use AI to analyze emails for phishing indicators using the PUSHED and VERIFY frameworks
+              <CardDescription className="flex items-center gap-1.5">
+                Use AI to check if a suspicious email is a phishing attempt
+                <InfoTip>
+                  <p className="font-medium mb-1">How it works</p>
+                  <p>When you click "VERIFY" on an email in Gmail, Vervain sends it to your AI provider which checks for:</p>
+                  <ul className="list-disc pl-4 space-y-1 mt-1">
+                    <li><strong>PUSHED</strong> — Emotional manipulation (pressure, urgency, high-stakes threats)</li>
+                    <li><strong>VERIFY</strong> — Technical red flags (fake domains, suspicious links, unusual requests)</li>
+                  </ul>
+                  <p className="mt-1.5">You get a risk score (0-100) and a breakdown of what was found. Your API key is stored locally.</p>
+                </InfoTip>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-2">
-                  <h4 className="font-medium">Enable AI Analysis</h4>
+                  <h4 className="font-medium">Enable VERIFY</h4>
                   <p className="text-sm text-muted-foreground">
-                    Show "Analyze with AI" button on emails in Gmail
+                    Show "VERIFY" button on emails in Gmail
                   </p>
                 </div>
                 <Switch
@@ -878,31 +816,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5 text-[#4B2EE3]" />
-                How It Works
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  When you click "Analyze with AI" on an email in Gmail, Vervain sends the email content to your configured AI provider for analysis using two frameworks:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>PUSHED</strong> — Detects emotional manipulation: Pressure, Urgency, Surprise, High-stakes, Excitement, Desperation</li>
-                  <li><strong>VERIFY</strong> — Checks technical indicators: sender legitimacy, link safety, attachment risks, and sensitive data requests</li>
-                </ul>
-                <p className="mt-2">
-                  You'll receive a confidence score (0-100) and detailed breakdown of any suspicious indicators found.
-                </p>
-                <p className="mt-2 text-muted-foreground">
-                  Note: You provide your own API key. Standard API usage charges from your provider apply.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
       
@@ -912,6 +825,7 @@ const OptionsPage = () => {
         </p>
       </footer>
     </div>
+    </TooltipProvider>
   );
 };
 
