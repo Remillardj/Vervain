@@ -1,0 +1,7 @@
+{
+  "source": "synthetic",
+  "expectedLabel": "suspicious",
+  "expectedScoreRange": [61, 100],
+  "expectedPushed": ["urgency", "highStakes", "pressure"],
+  "description": "Fake bank fraud alert with $4,892 unauthorized transaction and 2-hour deadline"
+}

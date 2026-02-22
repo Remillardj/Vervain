@@ -1,0 +1,21 @@
+From: "Microsoft 365 Team" <noreply@customer-support-microsoft.com>
+Subject: Action Required: Verify Your Microsoft 365 Account
+Content-Type: text/html; charset="utf-8"
+
+<html>
+<body style="font-family: Segoe UI, sans-serif; color: #333;">
+<div style="max-width: 600px; margin: 0 auto;">
+<img src="https://customer-support-microsoft.com/logo.png" alt="Microsoft" width="120">
+<h2>Account Verification Required</h2>
+<p>We noticed your Microsoft 365 subscription verification is incomplete. To maintain uninterrupted access to your services, please verify your account details.</p>
+<p>If your account is not verified within 7 days, the following services will be suspended:</p>
+<ul>
+<li>Outlook email</li>
+<li>OneDrive storage</li>
+<li>Microsoft Teams</li>
+</ul>
+<p><a href="https://customer-support-microsoft.com/verify?session=7f3a9b2c" style="background: #0078D4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">Verify My Account</a></p>
+<p style="font-size: 12px; color: #666;">Microsoft Corporation, One Microsoft Way, Redmond, WA 98052</p>
+</div>
+</body>
+</html>

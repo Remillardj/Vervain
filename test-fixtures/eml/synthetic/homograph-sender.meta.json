@@ -1,0 +1,7 @@
+{
+  "source": "synthetic",
+  "expectedLabel": "suspicious",
+  "expectedScoreRange": [61, 100],
+  "expectedPushed": ["pressure", "urgency", "highStakes"],
+  "description": "Cyrillic homograph PayPal impersonation with password reset demand and 24hr deadline"
+}

@@ -1,0 +1,7 @@
+{
+  "source": "synthetic",
+  "expectedLabel": "caution",
+  "expectedScoreRange": [31, 100],
+  "expectedPushed": ["pressure", "highStakes"],
+  "description": "Brand-embedded Microsoft 365 verification phishing with service suspension threat"
+}
