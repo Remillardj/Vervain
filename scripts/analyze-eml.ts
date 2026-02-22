@@ -15,8 +15,9 @@
  * Requires ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, basename, resolve } from 'path';
+import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join, basename, resolve, relative } from 'path';
+import { createHash } from 'crypto';
 import { parseEml } from '../src/utils/emlParser';
 import { buildUserMessage, AI_SYSTEM_PROMPT } from '../src/background/aiPrompt';
 
@@ -109,24 +110,97 @@ function parseManifest(manifestPath: string): Map<string, ManifestEntry> {
   return entries;
 }
 
+// --- Cache ---
+
+function promptHash(): string {
+  return createHash('sha256').update(AI_SYSTEM_PROMPT).digest('hex').slice(0, 12);
+}
+
+function cacheKey(filePath: string, batchDir: string): string {
+  return relative(batchDir, filePath).replace(/[\\/]/g, '--');
+}
+
+function getCacheDir(batchDir: string, model: string): string {
+  return join(batchDir, '.vervain-cache', `${model}_${promptHash()}`);
+}
+
+interface CachedResult {
+  timestamp: string;
+  model: string;
+  promptHash: string;
+  result: Record<string, unknown>;
+  timeMs: number;
+}
+
+function readCache(cacheDir: string, key: string): CachedResult | null {
+  const path = join(cacheDir, `${key}.json`);
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, 'utf-8'));
+}
+
+function writeCache(cacheDir: string, key: string, data: CachedResult): void {
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(join(cacheDir, `${key}.json`), JSON.stringify(data, null, 2));
+}
+
 // --- Analysis ---
 
 async function analyzeFile(
   filePath: string,
-  opts: { provider: string; model: string; apiKey: string; verbose: boolean; compare: boolean }
-): Promise<{ file: string; score: number; label: string; pushed: string[]; time: number; mismatch?: string }> {
+  opts: {
+    provider: string; model: string; apiKey: string;
+    verbose: boolean; compare: boolean;
+    batchDir?: string; noCache?: boolean;
+  }
+): Promise<{ file: string; score: number; label: string; pushed: string[]; verify: Record<string, string>; time: number; cached: boolean; mismatch?: string }> {
+  const relFile = opts.batchDir ? relative(opts.batchDir, filePath) : basename(filePath);
+
+  // Check cache
+  if (opts.batchDir && !opts.noCache) {
+    const cacheDir = getCacheDir(opts.batchDir, opts.model);
+    const key = cacheKey(filePath, opts.batchDir);
+    const cached = readCache(cacheDir, key);
+    if (cached) {
+      const result = cached.result;
+      const score = result.confidence as number;
+      const label = result.label as string;
+      const pushedObj = result.pushed as Record<string, { detected: boolean }>;
+      const pushedFlags = Object.entries(pushedObj).filter(([, v]) => v.detected).map(([k]) => k);
+      const verifyArr = result.verify as Array<{ flag: string; status: string }>;
+      const verify: Record<string, string> = {};
+      for (const v of verifyArr || []) verify[v.flag] = v.status;
+      return { file: relFile, score, label, pushed: pushedFlags, verify, time: cached.timeMs / 1000, cached: true };
+    }
+  }
+
   const raw = readFileSync(filePath, 'utf-8');
   const parsed = parseEml(raw);
   const userMessage = buildUserMessage(parsed);
 
   const start = Date.now();
   const result = await callAI(userMessage, opts.provider, opts.model, opts.apiKey);
-  const time = (Date.now() - start) / 1000;
+  const timeMs = Date.now() - start;
+
+  // Write cache
+  if (opts.batchDir && !opts.noCache) {
+    const cacheDir = getCacheDir(opts.batchDir, opts.model);
+    const key = cacheKey(filePath, opts.batchDir);
+    writeCache(cacheDir, key, {
+      timestamp: new Date().toISOString(),
+      model: opts.model,
+      promptHash: promptHash(),
+      result,
+      timeMs,
+    });
+  }
 
   const score = result.confidence as number;
   const label = result.label as string;
   const pushedObj = result.pushed as Record<string, { detected: boolean }>;
   const pushedFlags = Object.entries(pushedObj).filter(([, v]) => v.detected).map(([k]) => k);
+  const verifyArr = result.verify as Array<{ flag: string; status: string }>;
+  const verify: Record<string, string> = {};
+  for (const v of verifyArr || []) verify[v.flag] = v.status;
 
   if (opts.verbose) {
     console.log(`\n--- ${basename(filePath)} ---`);
@@ -149,14 +223,14 @@ async function analyzeFile(
     }
   }
 
-  return { file: basename(filePath), score, label, pushed: pushedFlags, time, mismatch };
+  return { file: relFile, score, label, pushed: pushedFlags, verify, time: timeMs / 1000, cached: false, mismatch };
 }
 
 // --- CLI ---
 
 function parseArgs(args: string[]): {
   provider: string; model: string; verbose: boolean; compare: boolean; batch: boolean;
-  manifest: string | null; target: string | null;
+  manifest: string | null; noCache: boolean; target: string | null;
 } {
   let provider = 'anthropic';
   let model = '';
@@ -164,6 +238,7 @@ function parseArgs(args: string[]): {
   let compare = false;
   let batch = false;
   let manifest: string | null = null;
+  let noCache = false;
   let target: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
@@ -174,16 +249,17 @@ function parseArgs(args: string[]): {
       case '--compare': compare = true; break;
       case '--batch': batch = true; break;
       case '--manifest': manifest = args[++i]; break;
+      case '--no-cache': noCache = true; break;
       default: if (!args[i].startsWith('--')) target = args[i]; break;
     }
   }
 
   if (!model) model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini';
-  return { provider, model, verbose, compare, batch, manifest, target };
+  return { provider, model, verbose, compare, batch, manifest, noCache, target };
 }
 
 async function main() {
-  const { provider, model, verbose, compare, batch, manifest, target } = parseArgs(process.argv.slice(2));
+  const { provider, model, verbose, compare, batch, manifest, noCache, target } = parseArgs(process.argv.slice(2));
 
   const apiKey = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) {
