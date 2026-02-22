@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff } from 'lucide-react';
+import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff, Shield, Lock, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import TrustedContactsManager from './TrustedContactsManager';
 import DomainsCSVImport from './DomainsCSVImport';
@@ -43,6 +44,12 @@ const OptionsPage = () => {
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState('claude-sonnet-4-5-20250929');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [autoTI, setAutoTI] = useState(false);
+  const [autoAI, setAutoAI] = useState(false);
+  const [virusTotalApiKey, setVirusTotalApiKey] = useState('');
+  const [showVTApiKey, setShowVTApiKey] = useState(false);
+  const [enabledThreatFeeds, setEnabledThreatFeeds] = useState<string[]>(['phishtank', 'urlhaus', 'threatfox', 'openphish']);
+  const [lockedKeys, setLockedKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadSettings();
@@ -68,6 +75,26 @@ const OptionsPage = () => {
       setAiProvider(data.aiProvider || 'anthropic');
       setAiApiKey(data.aiApiKey || '');
       setAiModel(data.aiModel || 'claude-sonnet-4-5-20250929');
+      setAutoTI(data.autoTI || false);
+      setAutoAI(data.autoAI || false);
+      setVirusTotalApiKey(data.virusTotalApiKey || '');
+      setEnabledThreatFeeds(data.enabledThreatFeeds || ['phishtank', 'urlhaus', 'threatfox', 'openphish']);
+
+      // Check managed storage for locked keys
+      if (typeof chrome !== 'undefined' && chrome.storage?.managed) {
+        try {
+          chrome.storage.managed.get(null, (managed) => {
+            if (chrome.runtime.lastError || !managed) return;
+            const locked = new Set<string>();
+            for (const key of Object.keys(managed)) {
+              locked.add(key);
+            }
+            setLockedKeys(locked);
+          });
+        } catch {
+          // Managed storage not available
+        }
+      }
     } catch (error) {
       showToast('Failed to load settings', 'error');
     }
@@ -288,6 +315,52 @@ const OptionsPage = () => {
     }
   };
 
+  const handleToggleAutoTI = async () => {
+    try {
+      const newState = !autoTI;
+      await saveData({ autoTI: newState });
+      setAutoTI(newState);
+      showToast(newState ? 'Auto known-threats check enabled' : 'Auto known-threats check disabled', 'success');
+    } catch (error) {
+      showToast('Failed to update setting', 'error');
+    }
+  };
+
+  const handleToggleAutoAI = async () => {
+    try {
+      const newState = !autoAI;
+      await saveData({ autoAI: newState });
+      setAutoAI(newState);
+      showToast(newState ? 'Auto AI Analysis enabled' : 'Auto AI Analysis disabled', 'success');
+    } catch (error) {
+      showToast('Failed to update setting', 'error');
+    }
+  };
+
+  const handleSaveVTApiKey = async () => {
+    try {
+      await saveData({ virusTotalApiKey });
+      showToast('VirusTotal API key saved', 'success');
+    } catch (error) {
+      showToast('Failed to save API key', 'error');
+    }
+  };
+
+  const handleToggleFeed = async (feedId: string) => {
+    const updated = enabledThreatFeeds.includes(feedId)
+      ? enabledThreatFeeds.filter(f => f !== feedId)
+      : [...enabledThreatFeeds, feedId];
+    try {
+      await saveData({ enabledThreatFeeds: updated });
+      setEnabledThreatFeeds(updated);
+      showToast('Threat feed settings updated', 'success');
+    } catch (error) {
+      showToast('Failed to update feed settings', 'error');
+    }
+  };
+
+  const isLocked = (key: string) => lockedKeys.has(key);
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-4xl">
       <header className="mb-8 text-center">
@@ -308,7 +381,7 @@ const OptionsPage = () => {
         value={activeTab} 
         onValueChange={setActiveTab}
       >
-        <TabsList className="grid w-full grid-cols-4 mb-8">
+        <TabsList className="grid w-full grid-cols-5 mb-8">
           <TabsTrigger value="general" className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
             <span>General</span>
@@ -320,6 +393,10 @@ const OptionsPage = () => {
           <TabsTrigger value="contacts" className="flex items-center gap-2">
             <User className="h-4 w-4" />
             <span>Contacts</span>
+          </TabsTrigger>
+          <TabsTrigger value="threatintel" className="flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            <span>Known Threats</span>
           </TabsTrigger>
           <TabsTrigger value="ai" className="flex items-center gap-2">
             <Brain className="h-4 w-4" />
@@ -375,11 +452,17 @@ const OptionsPage = () => {
                     Detect typosquatting, homograph attacks, and domain spoofing
                   </p>
                 </div>
-                <Switch
-                  checked={domainDetectionEnabled}
-                  onCheckedChange={handleToggleDomainDetection}
-                  aria-label="Toggle domain detection"
-                />
+                <div className="flex items-center gap-2">
+                  {isLocked('domainDetectionEnabled') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={domainDetectionEnabled}
+                    onCheckedChange={handleToggleDomainDetection}
+                    disabled={isLocked('domainDetectionEnabled')}
+                    aria-label="Toggle domain detection"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
@@ -389,11 +472,57 @@ const OptionsPage = () => {
                     Alert when someone uses a trusted contact's name with a different email
                   </p>
                 </div>
-                <Switch
-                  checked={contactDetectionEnabled}
-                  onCheckedChange={handleToggleContactDetection}
-                  aria-label="Toggle contact detection"
-                />
+                <div className="flex items-center gap-2">
+                  {isLocked('contactDetectionEnabled') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={contactDetectionEnabled}
+                    onCheckedChange={handleToggleContactDetection}
+                    disabled={isLocked('contactDetectionEnabled')}
+                    aria-label="Toggle contact detection"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h4 className="font-medium">Auto-check known threat databases</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically check sender domains against databases of known phishing and malware sites
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isLocked('tiAutoScan') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={autoTI}
+                    onCheckedChange={handleToggleAutoTI}
+                    disabled={isLocked('tiAutoScan')}
+                    aria-label="Toggle auto known-threats check"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h4 className="font-medium">Auto AI Analysis</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically run AI analysis on every email
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isLocked('aiAutoScan') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={autoAI}
+                    onCheckedChange={handleToggleAutoAI}
+                    disabled={isLocked('aiAutoScan')}
+                    aria-label="Toggle auto AI analysis"
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -492,6 +621,7 @@ const OptionsPage = () => {
                             onCheckedChange={() => handleToggleDomainSelection(domain)}
                           />
                           <span className="font-medium">{domain}</span>
+                          <Badge variant="outline" className="text-xs">Local</Badge>
                         </div>
                         <Button
                           variant="ghost"
@@ -569,6 +699,118 @@ const OptionsPage = () => {
                 </p>
                 <p className="mt-4">
                   <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple contacts from a spreadsheet.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="threatintel" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5 text-[#4B2EE3]" />
+                Known Threat Sources
+              </CardTitle>
+              <CardDescription>
+                Choose which databases Vervain checks for known phishing and malware domains
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {[
+                { id: 'phishtank', name: 'PhishTank', description: 'Community-verified phishing sites' },
+                { id: 'urlhaus', name: 'URLhaus', description: 'Known malware distribution sites' },
+                { id: 'threatfox', name: 'ThreatFox', description: 'Indicators of compromise database' },
+                { id: 'openphish', name: 'OpenPhish', description: 'Automatically detected phishing sites' },
+              ].map(feed => (
+                <div key={feed.id} className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <h4 className="font-medium">{feed.name}</h4>
+                    <p className="text-sm text-muted-foreground">{feed.description}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isLocked('enabledThreatFeeds') && (
+                      <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                    )}
+                    <Switch
+                      checked={enabledThreatFeeds.includes(feed.id)}
+                      onCheckedChange={() => handleToggleFeed(feed.id)}
+                      disabled={isLocked('enabledThreatFeeds')}
+                      aria-label={`Toggle ${feed.name}`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5 text-[#4B2EE3]" />
+                VirusTotal Integration
+              </CardTitle>
+              <CardDescription>
+                Use VirusTotal for additional domain reputation analysis (requires free API key)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="vt-api-key">VirusTotal API Key</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="vt-api-key"
+                      type={showVTApiKey ? 'text' : 'password'}
+                      value={virusTotalApiKey}
+                      onChange={(e) => setVirusTotalApiKey(e.target.value)}
+                      placeholder="Enter your VirusTotal API key"
+                      disabled={isLocked('virusTotalApiKey')}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowVTApiKey(!showVTApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showVTApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button onClick={handleSaveVTApiKey} disabled={isProcessing || isLocked('virusTotalApiKey')}>
+                    Save Key
+                  </Button>
+                </div>
+                {isLocked('virusTotalApiKey') && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Managed by your organization
+                  </p>
+                )}
+                <p className="text-sm text-muted-foreground">
+                  Get a free API key at virustotal.com. Rate limited to 4 requests/minute on the free tier.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5 text-[#4B2EE3]" />
+                How Known Threats Checking Works
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm space-y-2">
+                <p>
+                  Vervain checks sender domains against multiple databases of known malicious sites:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li><strong>Quick check</strong> — A fast lookup against all enabled databases (runs in milliseconds)</li>
+                  <li><strong>Confirmation</strong> — If a match is found, Vervain confirms it with the original source</li>
+                  <li><strong>VirusTotal</strong> — Additional reputation scoring and domain age analysis (optional)</li>
+                </ul>
+                <p className="mt-2">
+                  Databases refresh automatically in the background. All data is stored locally on your device.
                 </p>
               </div>
             </CardContent>
