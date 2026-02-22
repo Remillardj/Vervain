@@ -334,6 +334,162 @@ async function runBatch(
   return results;
 }
 
+// --- Stats ---
+
+function applyManifest(results: AnalysisResult[], manifest: Map<string, ManifestEntry>): void {
+  for (const r of results) {
+    if (r.error) continue;
+    const entry = manifest.get(r.file);
+    if (!entry) continue;
+    const issues: string[] = [];
+    if (entry.expectedLabel !== r.label) issues.push(`label: expected ${entry.expectedLabel}, got ${r.label}`);
+    if (entry.expectedScoreMin !== undefined && r.score < entry.expectedScoreMin)
+      issues.push(`score ${r.score} < min ${entry.expectedScoreMin}`);
+    if (entry.expectedScoreMax !== undefined && r.score > entry.expectedScoreMax)
+      issues.push(`score ${r.score} > max ${entry.expectedScoreMax}`);
+    if (entry.expectedPushed) {
+      for (const flag of entry.expectedPushed) {
+        if (!r.pushed.includes(flag)) issues.push(`missing PUSHED.${flag}`);
+      }
+    }
+    if (issues.length) r.mismatch = issues.join('; ');
+  }
+}
+
+interface EvalStats {
+  total: number;
+  errors: number;
+  classification: {
+    confusionMatrix: Record<string, Record<string, number>>;
+    binaryAccuracy: number;
+    precision: number;
+    recall: number;
+    f1: number;
+    falsePositiveRate: number;
+    falseNegativeRate: number;
+  };
+  thresholds: Array<{ threshold: number; tpr: number; fpr: number; f1: number }>;
+  pushedFlags: Record<string, { phishing: number; legitimate: number; phishingTotal: number; legitTotal: number }>;
+  verifyFlags: Record<string, { phishing: number; legitimate: number; phishingTotal: number; legitTotal: number }>;
+  latency: { p50: number; p90: number; p99: number };
+  apiCalls: number;
+  cachedHits: number;
+  estimatedCost: number;
+}
+
+function computeStats(
+  results: AnalysisResult[],
+  manifest: Map<string, ManifestEntry>,
+  model: string
+): EvalStats {
+  const valid = results.filter(r => !r.error);
+  const withTruth = valid.filter(r => manifest.has(r.file));
+
+  // Confusion matrix (3-class)
+  const labels = ['safe', 'caution', 'suspicious'];
+  const matrix: Record<string, Record<string, number>> = {};
+  for (const actual of labels) {
+    matrix[actual] = {};
+    for (const pred of labels) matrix[actual][pred] = 0;
+  }
+
+  for (const r of withTruth) {
+    const entry = manifest.get(r.file)!;
+    const actual = entry.expectedLabel;
+    const pred = r.label;
+    if (matrix[actual] && matrix[actual][pred] !== undefined) {
+      matrix[actual][pred]++;
+    }
+  }
+
+  // Binary: safe = negative, suspicious/caution = positive
+  let tp = 0, fp = 0, tn = 0, fn = 0;
+  for (const r of withTruth) {
+    const entry = manifest.get(r.file)!;
+    const actualPositive = entry.expectedLabel === 'suspicious';
+    const predPositive = r.label !== 'safe';
+    if (actualPositive && predPositive) tp++;
+    else if (!actualPositive && predPositive) fp++;
+    else if (!actualPositive && !predPositive) tn++;
+    else fn++;
+  }
+
+  const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+  const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+  const f1 = precision + recall > 0 ? 2 * precision * recall / (precision + recall) : 0;
+  const binaryAccuracy = withTruth.length > 0 ? (tp + tn) / withTruth.length : 0;
+  const falsePositiveRate = tn + fp > 0 ? fp / (tn + fp) : 0;
+  const falseNegativeRate = tp + fn > 0 ? fn / (tp + fn) : 0;
+
+  // Threshold sweep
+  const thresholds: EvalStats['thresholds'] = [];
+  for (let t = 0; t <= 100; t += 5) {
+    let tTp = 0, tFp = 0, tTn = 0, tFn = 0;
+    for (const r of withTruth) {
+      const entry = manifest.get(r.file)!;
+      const actualPositive = entry.expectedLabel === 'suspicious';
+      const predPositive = r.score >= t;
+      if (actualPositive && predPositive) tTp++;
+      else if (!actualPositive && predPositive) tFp++;
+      else if (!actualPositive && !predPositive) tTn++;
+      else tFn++;
+    }
+    const tTpr = tTp + tFn > 0 ? tTp / (tTp + tFn) : 0;
+    const tFpr = tTn + tFp > 0 ? tFp / (tTn + tFp) : 0;
+    const tPrec = tTp + tFp > 0 ? tTp / (tTp + tFp) : 0;
+    const tF1 = tPrec + tTpr > 0 ? 2 * tPrec * tTpr / (tPrec + tTpr) : 0;
+    thresholds.push({ threshold: t, tpr: tTpr, fpr: tFpr, f1: tF1 });
+  }
+
+  // Per-flag breakdown
+  const pushedNames = ['pressure', 'urgency', 'surprise', 'highStakes', 'excitement', 'desperation'];
+  const verifyNames = ['view', 'evaluate', 'request', 'interrogate', 'freeze', 'instincts'];
+
+  const pushedFlagStats: EvalStats['pushedFlags'] = {};
+  const verifyFlagStats: EvalStats['verifyFlags'] = {};
+
+  const phishingResults = withTruth.filter(r => manifest.get(r.file)!.expectedLabel === 'suspicious');
+  const legitResults = withTruth.filter(r => manifest.get(r.file)!.expectedLabel === 'safe');
+
+  for (const flag of pushedNames) {
+    pushedFlagStats[flag] = {
+      phishing: phishingResults.filter(r => r.pushed.includes(flag)).length,
+      legitimate: legitResults.filter(r => r.pushed.includes(flag)).length,
+      phishingTotal: phishingResults.length,
+      legitTotal: legitResults.length,
+    };
+  }
+  for (const flag of verifyNames) {
+    verifyFlagStats[flag] = {
+      phishing: phishingResults.filter(r => r.verify[flag] === 'warning').length,
+      legitimate: legitResults.filter(r => r.verify[flag] === 'warning').length,
+      phishingTotal: phishingResults.length,
+      legitTotal: legitResults.length,
+    };
+  }
+
+  // Latency percentiles (non-cached only)
+  const times = valid.filter(r => !r.cached).map(r => r.time).sort((a, b) => a - b);
+  const pctl = (arr: number[], p: number) => arr.length ? arr[Math.min(Math.floor(arr.length * p), arr.length - 1)] : 0;
+
+  // Cost estimate (rough)
+  const costPerCall = model.includes('haiku') ? 0.001 : model.includes('sonnet') ? 0.01 : model.includes('gpt-4o-mini') ? 0.001 : 0.005;
+  const apiCallCount = valid.filter(r => !r.cached).length;
+
+  return {
+    total: results.length,
+    errors: results.filter(r => r.error).length,
+    classification: { confusionMatrix: matrix, binaryAccuracy, precision, recall, f1, falsePositiveRate, falseNegativeRate },
+    thresholds,
+    pushedFlags: pushedFlagStats,
+    verifyFlags: verifyFlagStats,
+    latency: { p50: pctl(times, 0.5), p90: pctl(times, 0.9), p99: pctl(times, 0.99) },
+    apiCalls: apiCallCount,
+    cachedHits: valid.filter(r => r.cached).length,
+    estimatedCost: apiCallCount * costPerCall,
+  };
+}
+
 // --- CLI ---
 
 function parseArgs(args: string[]): {
