@@ -143,6 +143,21 @@ function writeCache(cacheDir: string, key: string, data: CachedResult): void {
   writeFileSync(join(cacheDir, `${key}.json`), JSON.stringify(data, null, 2));
 }
 
+// --- File Discovery ---
+
+function findEmlFiles(dir: string): string[] {
+  const results: string[] = [];
+  function walk(d: string) {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (entry.isDirectory() && entry.name !== '.vervain-cache') walk(full);
+      else if (entry.name.endsWith('.eml')) results.push(full);
+    }
+  }
+  walk(dir);
+  return results.sort();
+}
+
 // --- Analysis ---
 
 async function analyzeFile(
@@ -226,11 +241,104 @@ async function analyzeFile(
   return { file: relFile, score, label, pushed: pushedFlags, verify, time: timeMs / 1000, cached: false, mismatch };
 }
 
+// --- Batch Runner ---
+
+function progressBar(done: number, total: number, width = 40): string {
+  const pct = done / total;
+  const filled = Math.round(pct * width);
+  return '[' + '='.repeat(filled) + '-'.repeat(width - filled) + ']';
+}
+
+interface AnalysisResult {
+  file: string; score: number; label: string;
+  pushed: string[]; verify: Record<string, string>;
+  time: number; cached: boolean; mismatch?: string;
+  error?: string;
+}
+
+async function runBatch(
+  files: string[],
+  opts: {
+    provider: string; model: string; apiKey: string;
+    verbose: boolean; compare: boolean;
+    batchDir: string; noCache: boolean; concurrency: number;
+  }
+): Promise<AnalysisResult[]> {
+  const cacheDir = getCacheDir(opts.batchDir, opts.model);
+  const total = files.length;
+  let cachedCount = 0;
+
+  // Pre-scan for cached files
+  if (!opts.noCache) {
+    for (const f of files) {
+      const key = cacheKey(f, opts.batchDir);
+      if (readCache(cacheDir, key)) cachedCount++;
+    }
+  }
+
+  const remaining = opts.noCache ? total : total - cachedCount;
+  console.log(`Analyzing ${total} files (${cachedCount} cached, ${remaining} remaining) with ${opts.provider}/${opts.model}...\n`);
+
+  const results: AnalysisResult[] = new Array(total);
+  let done = 0;
+  const startTime = Date.now();
+  const errors: { file: string; error: string }[] = [];
+
+  function updateProgress() {
+    const elapsed = (Date.now() - startTime) / 1000;
+    const rate = done > 0 ? done / elapsed : 0;
+    const eta = rate > 0 ? Math.ceil((total - done) / rate) : 0;
+    const etaStr = eta > 60 ? `${Math.floor(eta / 60)}m${eta % 60}s` : `${eta}s`;
+    process.stdout.write(`\r${progressBar(done, total)} ${done}/${total}  |  ${rate.toFixed(1)}/s  |  ETA ${etaStr}  `);
+  }
+
+  // Work queue with concurrency limit
+  let nextIdx = 0;
+  async function worker() {
+    while (nextIdx < total) {
+      const idx = nextIdx++;
+      const file = files[idx];
+      try {
+        const r = await analyzeFile(file, {
+          ...opts,
+          batchDir: opts.batchDir,
+          noCache: opts.noCache,
+        });
+        results[idx] = r;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push({ file: relative(opts.batchDir, file), error: msg });
+        results[idx] = {
+          file: relative(opts.batchDir, file),
+          score: -1, label: 'error', pushed: [], verify: {},
+          time: 0, cached: false, error: msg,
+        };
+      }
+      done++;
+      updateProgress();
+    }
+  }
+
+  const workers = Array.from({ length: opts.concurrency }, () => worker());
+  await Promise.all(workers);
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  const apiCalls = results.filter(r => !r.cached && !r.error).length;
+  process.stdout.write('\n\n');
+  console.log(`Done in ${elapsed}s (${apiCalls} API calls, ${cachedCount} cached, ${errors.length} errors).`);
+  if (errors.length) {
+    console.log(`\nErrors:`);
+    for (const e of errors) console.log(`  ${e.file}: ${e.error}`);
+  }
+
+  return results;
+}
+
 // --- CLI ---
 
 function parseArgs(args: string[]): {
   provider: string; model: string; verbose: boolean; compare: boolean; batch: boolean;
-  manifest: string | null; noCache: boolean; target: string | null;
+  manifest: string | null; noCache: boolean; concurrency: number; target: string | null;
 } {
   let provider = 'anthropic';
   let model = '';
@@ -239,6 +347,7 @@ function parseArgs(args: string[]): {
   let batch = false;
   let manifest: string | null = null;
   let noCache = false;
+  let concurrency = 5;
   let target: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
@@ -250,16 +359,17 @@ function parseArgs(args: string[]): {
       case '--batch': batch = true; break;
       case '--manifest': manifest = args[++i]; break;
       case '--no-cache': noCache = true; break;
+      case '--concurrency': concurrency = parseInt(args[++i], 10); break;
       default: if (!args[i].startsWith('--')) target = args[i]; break;
     }
   }
 
   if (!model) model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini';
-  return { provider, model, verbose, compare, batch, manifest, noCache, target };
+  return { provider, model, verbose, compare, batch, manifest, noCache, concurrency, target };
 }
 
 async function main() {
-  const { provider, model, verbose, compare, batch, manifest, noCache, target } = parseArgs(process.argv.slice(2));
+  const { provider, model, verbose, compare, batch, manifest, noCache, concurrency, target } = parseArgs(process.argv.slice(2));
 
   const apiKey = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -277,24 +387,23 @@ async function main() {
   const pad = (s: string, n: number) => s.padEnd(n);
 
   if (batch) {
-    const files = readdirSync(resolvedTarget).filter(f => f.endsWith('.eml')).map(f => join(resolvedTarget, f));
+    const files = findEmlFiles(resolvedTarget);
     if (!files.length) { console.error('No .eml files found in', resolvedTarget); process.exit(1); }
 
-    console.log(`Analyzing ${files.length} file(s) with ${provider}/${model}...\n`);
-    const results = [];
-    for (const file of files) {
-      const r = await analyzeFile(file, opts);
-      results.push(r);
-      process.stdout.write('.');
-    }
-    console.log('\n');
+    const results = await runBatch(files, {
+      provider, model, apiKey, verbose, compare,
+      batchDir: resolvedTarget, noCache, concurrency,
+    });
 
-    // Summary table
-    console.log(pad('File', 35) + pad('Score', 8) + pad('Label', 14) + pad('PUSHED', 30) + pad('Time', 8) + (compare ? 'Mismatch' : ''));
-    console.log('-'.repeat(95 + (compare ? 30 : 0)));
-    for (const r of results) {
-      const line = pad(r.file, 35) + pad(String(r.score), 8) + pad(r.label, 14) + pad(r.pushed.join(', ') || '-', 30) + pad(r.time.toFixed(1) + 's', 8);
-      console.log(compare && r.mismatch ? line + ' !! ' + r.mismatch : line);
+    // Summary table (for small batches without manifest)
+    if (!manifest && results.length <= 100) {
+      console.log('\n' + pad('File', 45) + pad('Score', 8) + pad('Label', 14) + pad('PUSHED', 30) + pad('Time', 8) + (compare ? 'Mismatch' : ''));
+      console.log('-'.repeat(105 + (compare ? 30 : 0)));
+      for (const r of results) {
+        if (r.error) { console.log(pad(r.file, 45) + 'ERROR: ' + r.error); continue; }
+        const line = pad(r.file, 45) + pad(String(r.score), 8) + pad(r.label, 14) + pad(r.pushed.join(', ') || '-', 30) + pad(r.time.toFixed(1) + 's', 8);
+        console.log(compare && r.mismatch ? line + ' !! ' + r.mismatch : line);
+      }
     }
   } else {
     if (!existsSync(resolvedTarget)) { console.error('File not found:', resolvedTarget); process.exit(1); }
