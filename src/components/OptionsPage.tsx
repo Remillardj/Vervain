@@ -487,26 +487,6 @@ const OptionsPage = () => {
 
               <div className="flex items-center justify-between">
                 <div className="space-y-2">
-                  <h4 className="font-medium">Auto-check known threat databases</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically check sender domains against databases of known phishing and malware sites
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isLocked('tiAutoScan') && (
-                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
-                  )}
-                  <Switch
-                    checked={autoTI}
-                    onCheckedChange={handleToggleAutoTI}
-                    disabled={isLocked('tiAutoScan')}
-                    aria-label="Toggle auto known-threats check"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
                   <h4 className="font-medium">Auto AI Analysis</h4>
                   <p className="text-sm text-muted-foreground">
                     Automatically run AI analysis on every email
@@ -710,37 +690,32 @@ const OptionsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5 text-[#4B2EE3]" />
-                Known Threat Sources
+                Known Threat Checking
               </CardTitle>
               <CardDescription>
-                Choose which databases Vervain checks for known phishing and malware domains
+                Check sender domains against databases of known phishing and malware sites
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { id: 'phishtank', name: 'PhishTank', description: 'Community-verified phishing sites' },
-                { id: 'urlhaus', name: 'URLhaus', description: 'Known malware distribution sites' },
-                { id: 'threatfox', name: 'ThreatFox', description: 'Indicators of compromise database' },
-                { id: 'openphish', name: 'OpenPhish', description: 'Automatically detected phishing sites' },
-              ].map(feed => (
-                <div key={feed.id} className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <h4 className="font-medium">{feed.name}</h4>
-                    <p className="text-sm text-muted-foreground">{feed.description}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isLocked('enabledThreatFeeds') && (
-                      <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
-                    )}
-                    <Switch
-                      checked={enabledThreatFeeds.includes(feed.id)}
-                      onCheckedChange={() => handleToggleFeed(feed.id)}
-                      disabled={isLocked('enabledThreatFeeds')}
-                      aria-label={`Toggle ${feed.name}`}
-                    />
-                  </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h4 className="font-medium">Enable known threat checking</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically check every email's sender domain against known malicious site databases
+                  </p>
                 </div>
-              ))}
+                <div className="flex items-center gap-2">
+                  {isLocked('tiAutoScan') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={autoTI}
+                    onCheckedChange={handleToggleAutoTI}
+                    disabled={isLocked('tiAutoScan')}
+                    aria-label="Toggle known threat checking"
+                  />
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -805,8 +780,8 @@ const OptionsPage = () => {
                   Vervain checks sender domains against multiple databases of known malicious sites:
                 </p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>Quick check</strong> — A fast lookup against all enabled databases (runs in milliseconds)</li>
-                  <li><strong>Confirmation</strong> — If a match is found, Vervain confirms it with the original source</li>
+                  <li><strong>Quick check</strong> — A fast lookup against known threat databases (runs in milliseconds)</li>
+                  <li><strong>Confirmation</strong> — If a match is found, Vervain double-checks with the original source</li>
                   <li><strong>VirusTotal</strong> — Additional reputation scoring and domain age analysis (optional)</li>
                 </ul>
                 <p className="mt-2">
