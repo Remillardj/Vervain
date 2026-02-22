@@ -69,6 +69,46 @@ async function callAI(
   }
 }
 
+// --- Manifest ---
+
+interface ManifestEntry {
+  file: string;
+  expectedLabel: string;
+  expectedScoreMin?: number;
+  expectedScoreMax?: number;
+  expectedPushed?: string[];
+}
+
+function parseManifest(manifestPath: string): Map<string, ManifestEntry> {
+  const raw = readFileSync(manifestPath, 'utf-8');
+  const lines = raw.trim().split('\n');
+  const header = lines[0].split(',').map(h => h.trim());
+
+  const fileIdx = header.indexOf('file');
+  const labelIdx = header.indexOf('expected_label');
+  const minIdx = header.indexOf('expected_score_min');
+  const maxIdx = header.indexOf('expected_score_max');
+  const pushedIdx = header.indexOf('expected_pushed');
+
+  if (fileIdx === -1 || labelIdx === -1) {
+    throw new Error('Manifest CSV must have "file" and "expected_label" columns');
+  }
+
+  const entries = new Map<string, ManifestEntry>();
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].match(/(".*?"|[^,]+)/g)?.map(c => c.replace(/^"|"$/g, '').trim()) || [];
+    if (!cols[fileIdx]) continue;
+    entries.set(cols[fileIdx], {
+      file: cols[fileIdx],
+      expectedLabel: cols[labelIdx],
+      expectedScoreMin: minIdx !== -1 && cols[minIdx] ? Number(cols[minIdx]) : undefined,
+      expectedScoreMax: maxIdx !== -1 && cols[maxIdx] ? Number(cols[maxIdx]) : undefined,
+      expectedPushed: pushedIdx !== -1 && cols[pushedIdx] ? cols[pushedIdx].split(',').map(s => s.trim()) : undefined,
+    });
+  }
+  return entries;
+}
+
 // --- Analysis ---
 
 async function analyzeFile(
@@ -115,13 +155,15 @@ async function analyzeFile(
 // --- CLI ---
 
 function parseArgs(args: string[]): {
-  provider: string; model: string; verbose: boolean; compare: boolean; batch: boolean; target: string | null;
+  provider: string; model: string; verbose: boolean; compare: boolean; batch: boolean;
+  manifest: string | null; target: string | null;
 } {
   let provider = 'anthropic';
   let model = '';
   let verbose = false;
   let compare = false;
   let batch = false;
+  let manifest: string | null = null;
   let target: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
@@ -131,16 +173,17 @@ function parseArgs(args: string[]): {
       case '--verbose': verbose = true; break;
       case '--compare': compare = true; break;
       case '--batch': batch = true; break;
+      case '--manifest': manifest = args[++i]; break;
       default: if (!args[i].startsWith('--')) target = args[i]; break;
     }
   }
 
   if (!model) model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini';
-  return { provider, model, verbose, compare, batch, target };
+  return { provider, model, verbose, compare, batch, manifest, target };
 }
 
 async function main() {
-  const { provider, model, verbose, compare, batch, target } = parseArgs(process.argv.slice(2));
+  const { provider, model, verbose, compare, batch, manifest, target } = parseArgs(process.argv.slice(2));
 
   const apiKey = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) {
