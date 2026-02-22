@@ -51,7 +51,6 @@ const OptionsPage = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const { toast } = useToast();
-  const [autoAddDomains, setAutoAddDomains] = useState(false); // New state for auto-add domains
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiProvider, setAiProvider] = useState<'anthropic' | 'openai'>('anthropic');
@@ -84,7 +83,6 @@ const OptionsPage = () => {
         setContactDetectionEnabledState(data.contactDetectionEnabled !== false);
       }
 
-      setAutoAddDomains(data.autoAddDomains || false); // Load auto-add domains setting
       setAiEnabled(data.aiEnabled || false);
       setAiProvider(data.aiProvider || 'anthropic');
       setAiApiKey(data.aiApiKey || '');
@@ -274,16 +272,6 @@ const OptionsPage = () => {
       );
     } catch (error) {
       showToast('Failed to update contact detection settings', 'error');
-    }
-  };
-
-  const saveAutoAddDomainsSetting = async (value: boolean) => {
-    try {
-      await saveData({ autoAddDomains: value });
-      setAutoAddDomains(value);
-      showToast('Auto-add domains setting updated', 'success');
-    } catch (error) {
-      showToast('Failed to update auto-add domains setting', 'error');
     }
   };
 
@@ -522,27 +510,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5 text-[#4B2EE3]" />
-                Auto-Add Domains
-              </CardTitle>
-              <CardDescription>
-                Automatically add domains from emails to your monitored list.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Switch 
-                checked={autoAddDomains}
-                onCheckedChange={saveAutoAddDomainsSetting}
-                aria-label="Toggle auto-add domains"
-              />
-              <p className="text-sm text-muted-foreground mt-2">
-                When enabled, Vervain will automatically add domains found in emails to your monitored list.
-              </p>
-            </CardContent>
-          </Card>
         </TabsContent>
         
         <TabsContent value="domains" className="space-y-6">

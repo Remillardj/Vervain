@@ -16,13 +16,16 @@ export interface UserDomainData {
   blockedDomains?: string[];
   additionalDomains?: string[];
   trustedContacts?: TrustedContact[];
-  autoAddDomains?: boolean; // New configuration option for auto-adding domains
   alertsCount?: number; // Number of alerts shown
   lastUpdated?: number; // Timestamp of last update
   aiProvider?: 'anthropic' | 'openai';
   aiApiKey?: string;
   aiModel?: string;
   aiEnabled?: boolean;
+  autoTI?: boolean;
+  autoAI?: boolean;
+  virusTotalApiKey?: string;
+  enabledThreatFeeds?: string[];
 }
 
 // Default data
@@ -42,7 +45,11 @@ const defaultData: UserDomainData = {
   aiProvider: 'anthropic',
   aiApiKey: '',
   aiModel: 'claude-sonnet-4-5-20250929',
-  aiEnabled: false
+  aiEnabled: false,
+  autoTI: false,
+  autoAI: false,
+  virusTotalApiKey: '',
+  enabledThreatFeeds: ['phishtank', 'urlhaus', 'threatfox', 'openphish']
 };
 
 // Save data to Chrome storage
