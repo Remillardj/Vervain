@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { Shield, AlertTriangle, Settings, RefreshCw, Eye, EyeOff } from 'lucide-react';
-import { getData, setDetectionEnabled } from '@/utils/storage';
+import { getData, setDetectionEnabled, saveData } from '@/utils/storage';
 import { useToast } from '@/hooks/use-toast';
 
 interface DomainData {
@@ -16,14 +17,19 @@ interface DomainData {
   }[];
   setupComplete: boolean;
   detectionEnabled: boolean;
+  domainDetectionEnabled: boolean;
   alertsCount: number;
   lastUpdated: number;
+  autoTI: boolean;
+  autoAI: boolean;
+  aiEnabled: boolean;
 }
 
 const Dashboard = () => {
   const [data, setData] = useState<DomainData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -34,13 +40,19 @@ const Dashboard = () => {
     try {
       setLoading(true);
       const result = await getData();
+      const domainOn = result.domainDetectionEnabled !== false;
+      const contactOn = result.contactDetectionEnabled !== false;
       setData({
         primaryDomain: result.primaryDomain,
         variations: result.variations,
         setupComplete: result.setupComplete,
-        detectionEnabled: result.detectionEnabled,
+        detectionEnabled: domainOn || contactOn,
+        domainDetectionEnabled: domainOn,
         alertsCount: result.alertsCount,
-        lastUpdated: result.lastUpdated
+        lastUpdated: result.lastUpdated,
+        autoTI: result.autoTI || false,
+        autoAI: result.autoAI || false,
+        aiEnabled: result.aiEnabled || false,
       });
     } catch (error) {
       console.error("Error loading data:", error);
@@ -79,15 +91,17 @@ const Dashboard = () => {
   };
 
   const toggleDetection = async () => {
-    if (!data) return;
+    if (!data || toggling) return;
     
+    setToggling(true);
     try {
       const newState = !data.detectionEnabled;
       await setDetectionEnabled(newState);
       
       setData({
         ...data,
-        detectionEnabled: newState
+        detectionEnabled: newState,
+        domainDetectionEnabled: newState,
       });
       
       toast({
@@ -102,6 +116,30 @@ const Dashboard = () => {
         description: "Failed to update protection status",
         variant: "destructive"
       });
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleToggleAutoTI = async () => {
+    if (!data) return;
+    const newState = !data.autoTI;
+    try {
+      await saveData({ autoTI: newState });
+      setData({ ...data, autoTI: newState });
+    } catch {
+      toast({ title: "Error", description: "Failed to update setting", variant: "destructive" });
+    }
+  };
+
+  const handleToggleAutoAI = async () => {
+    if (!data) return;
+    const newState = !data.autoAI;
+    try {
+      await saveData({ autoAI: newState });
+      setData({ ...data, autoAI: newState });
+    } catch {
+      toast({ title: "Error", description: "Failed to update setting", variant: "destructive" });
     }
   };
 
@@ -143,15 +181,17 @@ const Dashboard = () => {
         </Badge>
       </div>
 
-      <Card className="mb-4">
+      <Card className={`mb-4 ${!data.detectionEnabled ? 'opacity-60' : ''}`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-md font-medium">Domain Protection</CardTitle>
-          <CardDescription>Protecting emails for your domain</CardDescription>
+          <CardDescription>
+            {data.detectionEnabled ? 'Protecting emails for your domain' : 'Protection is paused'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-lg font-semibold text-[#4B2EE3]">
+              <p className={`text-lg font-semibold ${data.detectionEnabled ? 'text-[#4B2EE3]' : 'text-gray-400'}`}>
                 {data.primaryDomain}
               </p>
               <p className="text-sm text-gray-500">
@@ -181,6 +221,7 @@ const Dashboard = () => {
               variant="ghost"
               size="sm"
               onClick={toggleDetection}
+              disabled={toggling}
               className={data.detectionEnabled ? "text-red-500 hover:text-red-600" : "text-green-600 hover:text-green-700"}
             >
               {data.detectionEnabled ? (
@@ -199,6 +240,25 @@ const Dashboard = () => {
         </CardContent>
       </Card>
 
+      <Card className={`mb-4 ${!data.detectionEnabled ? 'opacity-60' : ''}`}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-md font-medium">Detection Layers</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2 flex-wrap mb-4">
+            <Badge variant={data.detectionEnabled && data.domainDetectionEnabled ? "default" : "outline"}>Domain</Badge>
+            <Badge variant={data.detectionEnabled ? "default" : "outline"}>Known Threats</Badge>
+            <Badge variant={data.detectionEnabled && data.aiEnabled ? "default" : "outline"}>AI</Badge>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Auto AI Analysis</span>
+              <Switch checked={data.autoAI} onCheckedChange={handleToggleAutoAI} disabled={!data.detectionEnabled} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="mb-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-md font-medium">Protection Stats</CardTitle>
@@ -209,9 +269,9 @@ const Dashboard = () => {
               <p className="text-sm text-gray-600">Alerts</p>
               <p className="text-2xl font-bold text-blue-800">{data.alertsCount}</p>
             </div>
-            <div className="bg-green-50 p-3 rounded-lg">
+            <div className={data.detectionEnabled ? "bg-green-50 p-3 rounded-lg" : "bg-gray-100 p-3 rounded-lg"}>
               <p className="text-sm text-gray-600">Status</p>
-              <p className="text-sm font-medium text-green-700">
+              <p className={data.detectionEnabled ? "text-sm font-medium text-green-700" : "text-sm font-medium text-gray-500"}>
                 {data.detectionEnabled ? "Active" : "Inactive"}
               </p>
             </div>
