@@ -675,10 +675,10 @@ const OptionsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5 text-[#4B2EE3]" />
-                VirusTotal Integration
+                VirusTotal
               </CardTitle>
               <CardDescription>
-                Use VirusTotal for additional domain reputation analysis (requires free API key)
+                Additional domain reputation checking
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -712,9 +712,6 @@ const OptionsPage = () => {
                     <Lock className="h-3 w-3" /> Managed by your organization
                   </p>
                 )}
-                <p className="text-sm text-muted-foreground">
-                  Get a free API key at virustotal.com. Rate limited to 4 requests/minute on the free tier.
-                </p>
               </div>
             </CardContent>
           </Card>
