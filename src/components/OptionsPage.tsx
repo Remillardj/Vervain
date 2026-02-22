@@ -372,7 +372,7 @@ const OptionsPage = () => {
             <img src="/vervain.png" alt="Vervain Logo" className="h-8 w-8" />
             <h1 className="text-3xl font-bold tracking-tight text-[#4B2EE3]">Vervain Settings</h1>
           </div>
-          <p className="text-[#4B2EE3] max-w-lg mx-auto font-medium">
+          <p className="text-[#4B2EE3] max-w-xl mx-auto font-medium">
             Configure your protection settings to defend against phishing attempts that target your domains.
           </p>
         </div>
