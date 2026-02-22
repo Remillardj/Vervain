@@ -490,11 +490,79 @@ function computeStats(
   };
 }
 
+// --- Report ---
+
+function printReport(stats: EvalStats): void {
+  const pct = (n: number) => (n * 100).toFixed(1) + '%';
+  const pad = (s: string, n: number) => s.padEnd(n);
+
+  // Classification
+  console.log('\n=== Classification ===\n');
+  console.log('Confusion Matrix:');
+  console.log(pad('', 20) + pad('Pred safe', 14) + pad('Pred caution', 14) + 'Pred suspicious');
+  console.log('-'.repeat(62));
+  for (const actual of ['safe', 'suspicious']) {
+    const row = stats.classification.confusionMatrix[actual] || {};
+    console.log(
+      pad(`Actual ${actual}`, 20) +
+      pad(String(row['safe'] || 0), 14) +
+      pad(String(row['caution'] || 0), 14) +
+      String(row['suspicious'] || 0)
+    );
+  }
+  console.log();
+  console.log(`Accuracy:  ${pct(stats.classification.binaryAccuracy)}`);
+  console.log(`Precision: ${pct(stats.classification.precision)}`);
+  console.log(`Recall:    ${pct(stats.classification.recall)}`);
+  console.log(`F1:        ${pct(stats.classification.f1)}`);
+  console.log(`FP Rate:   ${pct(stats.classification.falsePositiveRate)}`);
+  console.log(`FN Rate:   ${pct(stats.classification.falseNegativeRate)}`);
+
+  // Threshold analysis
+  console.log('\n=== Threshold Analysis ===\n');
+  console.log(pad('Threshold', 12) + pad('TPR', 10) + pad('FPR', 10) + 'F1');
+  console.log('-'.repeat(42));
+  let bestF1 = 0, bestT = 0;
+  for (const t of stats.thresholds) {
+    if (t.f1 > bestF1) { bestF1 = t.f1; bestT = t.threshold; }
+  }
+  for (const t of stats.thresholds) {
+    const marker = t.threshold === bestT ? ' *' : '';
+    console.log(pad(String(t.threshold), 12) + pad(pct(t.tpr), 10) + pad(pct(t.fpr), 10) + pct(t.f1) + marker);
+  }
+  console.log(`\n* Best F1 at threshold ${bestT}`);
+
+  // Per-flag breakdown
+  console.log('\n=== PUSHED Flags (% detected) ===\n');
+  console.log(pad('Flag', 16) + pad('Phishing', 12) + 'Legitimate');
+  console.log('-'.repeat(38));
+  for (const [flag, data] of Object.entries(stats.pushedFlags)) {
+    const phishPct = data.phishingTotal > 0 ? pct(data.phishing / data.phishingTotal) : 'N/A';
+    const legitPct = data.legitTotal > 0 ? pct(data.legitimate / data.legitTotal) : 'N/A';
+    console.log(pad(flag, 16) + pad(phishPct, 12) + legitPct);
+  }
+
+  console.log('\n=== VERIFY Flags (% warning) ===\n');
+  console.log(pad('Flag', 16) + pad('Phishing', 12) + 'Legitimate');
+  console.log('-'.repeat(38));
+  for (const [flag, data] of Object.entries(stats.verifyFlags)) {
+    const phishPct = data.phishingTotal > 0 ? pct(data.phishing / data.phishingTotal) : 'N/A';
+    const legitPct = data.legitTotal > 0 ? pct(data.legitimate / data.legitTotal) : 'N/A';
+    console.log(pad(flag, 16) + pad(phishPct, 12) + legitPct);
+  }
+
+  // Operational
+  console.log('\n=== Operational ===\n');
+  console.log(`Latency: p50=${stats.latency.p50.toFixed(2)}s  p90=${stats.latency.p90.toFixed(2)}s  p99=${stats.latency.p99.toFixed(2)}s`);
+  console.log(`API calls: ${stats.apiCalls}  |  Cached: ${stats.cachedHits}  |  Errors: ${stats.errors}`);
+  console.log(`Estimated cost: $${stats.estimatedCost.toFixed(2)}`);
+}
+
 // --- CLI ---
 
 function parseArgs(args: string[]): {
   provider: string; model: string; verbose: boolean; compare: boolean; batch: boolean;
-  manifest: string | null; noCache: boolean; concurrency: number; target: string | null;
+  manifest: string | null; noCache: boolean; concurrency: number; report: string | null; target: string | null;
 } {
   let provider = 'anthropic';
   let model = '';
@@ -504,6 +572,7 @@ function parseArgs(args: string[]): {
   let manifest: string | null = null;
   let noCache = false;
   let concurrency = 5;
+  let report: string | null = null;
   let target: string | null = null;
 
   for (let i = 0; i < args.length; i++) {
@@ -516,16 +585,17 @@ function parseArgs(args: string[]): {
       case '--manifest': manifest = args[++i]; break;
       case '--no-cache': noCache = true; break;
       case '--concurrency': concurrency = parseInt(args[++i], 10); break;
+      case '--report': report = args[++i]; break;
       default: if (!args[i].startsWith('--')) target = args[i]; break;
     }
   }
 
   if (!model) model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini';
-  return { provider, model, verbose, compare, batch, manifest, noCache, concurrency, target };
+  return { provider, model, verbose, compare, batch, manifest, noCache, concurrency, report, target };
 }
 
 async function main() {
-  const { provider, model, verbose, compare, batch, manifest, noCache, concurrency, target } = parseArgs(process.argv.slice(2));
+  const { provider, model, verbose, compare, batch, manifest, noCache, concurrency, report, target } = parseArgs(process.argv.slice(2));
 
   const apiKey = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -551,8 +621,21 @@ async function main() {
       batchDir: resolvedTarget, noCache, concurrency,
     });
 
-    // Summary table (for small batches without manifest)
-    if (!manifest && results.length <= 100) {
+    if (manifest) {
+      const manifestMap = parseManifest(resolve(manifest));
+      applyManifest(results, manifestMap);
+      const stats = computeStats(results, manifestMap, model);
+      printReport(stats);
+
+      if (report) {
+        const reportPath = resolve(report);
+        const reportDir = reportPath.split('/').slice(0, -1).join('/');
+        if (reportDir) mkdirSync(reportDir, { recursive: true });
+        writeFileSync(reportPath, JSON.stringify({ stats, results }, null, 2));
+        console.log(`\nFull report saved to ${report}`);
+      }
+    } else if (results.length <= 100) {
+      // Small batch without manifest — show summary table
       console.log('\n' + pad('File', 45) + pad('Score', 8) + pad('Label', 14) + pad('PUSHED', 30) + pad('Time', 8) + (compare ? 'Mismatch' : ''));
       console.log('-'.repeat(105 + (compare ? 30 : 0)));
       for (const r of results) {
