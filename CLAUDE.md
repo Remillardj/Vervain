@@ -22,8 +22,11 @@ To load in Chrome: build, then go to `chrome://extensions` → "Load unpacked" �
 Test `.eml` files against the AI phishing analyzer:
 
 ```bash
-# Single file
+# Anthropic (default provider)
 ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts <file.eml>
+
+# OpenAI
+OPENAI_API_KEY=<key> npx tsx scripts/analyze-eml.ts <file.eml> --provider openai
 
 # Batch (all .eml files in a directory)
 ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts --batch <directory>
@@ -36,6 +39,7 @@ ANTHROPIC_API_KEY=<key> npx tsx scripts/analyze-eml.ts <file.eml> --verbose
 ```
 
 Flags: `--provider anthropic|openai`, `--model <id>`, `--verbose`, `--compare`, `--batch`.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` depending on provider.
 
 Test fixtures live in `test-fixtures/eml/` — drop `.eml` files in `synthetic/`, `phishing/`, or `legitimate/`.
 
