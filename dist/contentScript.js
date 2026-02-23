@@ -446,6 +446,132 @@ function showAIError(message) {
   }
 }
 
+// --- Deep Scan results (signal summary + AI detail) ---
+
+function showDeepScanResultsPanel(deepResult) {
+  isModifyingDOM = true;
+  try {
+    var existing = document.querySelector('.vervain-ai-results');
+    if (existing) existing.remove();
+
+    var headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    if (!headerArea) return;
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'vervain-ai-results';
+
+    // Signal summary strip
+    var strip = document.createElement('div');
+    strip.style.cssText =
+      'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:12px;' +
+      'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' +
+      'padding:8px 12px;margin:8px 0 4px 0;' +
+      'background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;';
+
+    var stripLabel = document.createElement('span');
+    stripLabel.style.cssText = 'font-weight:600;color:#475569;';
+    stripLabel.textContent = 'Signals:';
+    strip.appendChild(stripLabel);
+
+    // Domain signal
+    var domainPill = buildSignalPill(
+      'Domain',
+      deepResult.domain && deepResult.domain.verdict !== 'clean',
+      deepResult.domain ? deepResult.domain.verdict : 'clean'
+    );
+    strip.appendChild(domainPill);
+
+    // Threat Intel signal
+    var tiPill = buildSignalPill(
+      'Threat Intel',
+      deepResult.threatIntel && deepResult.threatIntel.bloomHit,
+      deepResult.threatIntel ? 'match' : 'clean'
+    );
+    strip.appendChild(tiPill);
+
+    // VirusTotal signal
+    var vtActive = deepResult.vt && deepResult.vt.reputation < 0;
+    var vtPill = buildSignalPill(
+      'VirusTotal',
+      vtActive,
+      deepResult.vt ? 'rep ' + deepResult.vt.reputation : 'N/A'
+    );
+    strip.appendChild(vtPill);
+
+    // AI signal
+    var aiActive = deepResult.ai && deepResult.ai.confidence > 40;
+    var aiLabel = deepResult.ai ? deepResult.ai.label || 'done' : 'N/A';
+    var aiPill = buildSignalPill('AI', aiActive, aiLabel);
+    strip.appendChild(aiPill);
+
+    // Aggregate verdict badge
+    var agg = deepResult.aggregate;
+    var aggColor = agg.verdict === 'clean' ? '#22c55e' : agg.verdict === 'warning' ? '#eab308' : '#ef4444';
+    var aggBadge = document.createElement('span');
+    aggBadge.style.cssText =
+      'margin-left:auto;font-weight:700;color:' + aggColor + ';font-size:13px;';
+    aggBadge.textContent = agg.confidence + '% ' + agg.verdict.charAt(0).toUpperCase() + agg.verdict.slice(1);
+    strip.appendChild(aggBadge);
+
+    wrapper.appendChild(strip);
+
+    // AI detail panel (if AI ran)
+    if (deepResult.ai && deepResult.ai.pushed) {
+      var aiPanel = buildResultsPanelHTML(deepResult.ai);
+      wrapper.appendChild(aiPanel);
+    } else if (!deepResult.ai) {
+      var noAi = document.createElement('div');
+      noAi.style.cssText =
+        'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:13px;color:#94a3b8;' +
+        'background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;' +
+        'padding:10px 16px;margin:4px 0 12px 0;font-style:italic;';
+      noAi.textContent = 'AI analysis not available \u2014 check API key in settings';
+      wrapper.appendChild(noAi);
+    }
+
+    headerArea.parentNode.insertBefore(wrapper, headerArea.nextSibling);
+
+    // Wire collapse button for AI panel if present
+    var collapseBtn = wrapper.querySelector('.vervain-ai-collapse');
+    var body = wrapper.querySelector('.vervain-ai-panel-body');
+    if (collapseBtn && body) {
+      collapseBtn.addEventListener('click', function() {
+        var collapsed = body.style.display === 'none';
+        body.style.display = collapsed ? '' : 'none';
+        collapseBtn.textContent = collapsed ? '\u25B2' : '\u25BC';
+        collapseBtn.title = collapsed ? 'Collapse' : 'Expand';
+      });
+    }
+  } finally {
+    isModifyingDOM = false;
+  }
+}
+
+function buildSignalPill(label, active, detail) {
+  var pill = document.createElement('span');
+  var bg, color, border;
+  if (active) {
+    bg = '#fef2f2'; color = '#dc2626'; border = '#fca5a5';
+  } else {
+    bg = '#f0fdf4'; color = '#15803d'; border = '#86efac';
+  }
+  pill.style.cssText =
+    'display:inline-flex;align-items:center;gap:4px;' +
+    'padding:2px 8px;border-radius:10px;' +
+    'background:' + bg + ';color:' + color + ';border:1px solid ' + border + ';' +
+    'font-size:11px;font-weight:500;';
+  var nameSpan = document.createElement('span');
+  nameSpan.textContent = label;
+  pill.appendChild(nameSpan);
+  if (active && detail) {
+    var detailSpan = document.createElement('span');
+    detailSpan.style.opacity = '0.7';
+    detailSpan.textContent = '(' + detail + ')';
+    pill.appendChild(detailSpan);
+  }
+  return pill;
+}
+
 // --- VERIFY button (AI analysis trigger) ---
 
 async function handleVerifyClick(button) {
@@ -462,9 +588,51 @@ async function handleVerifyClick(button) {
       return;
     }
 
-    var response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
+    // Try DEEP_SCAN first (combines domain + TI + VT + AI)
+    var response;
+    var isDeepScan = false;
+    try {
+      var deepScanData = {
+        sender: emailData.senderEmail,
+        domain: extractDomain(emailData.senderEmail),
+        contactName: emailData.senderName,
+        subject: emailData.subject,
+        body: emailData.body,
+        links: emailData.urls || []
+      };
+      response = await chrome.runtime.sendMessage({ type: 'DEEP_SCAN', data: deepScanData });
+      isDeepScan = response && response.aggregate;
+    } catch (deepErr) {
+      console.warn('[Vervain] DEEP_SCAN failed, falling back to AI_ANALYZE:', deepErr);
+    }
 
-    if (response.success) {
+    // Fallback to AI_ANALYZE if DEEP_SCAN failed
+    if (!isDeepScan) {
+      response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
+    }
+
+    if (isDeepScan) {
+      // Deep scan response: show signal summary + AI panel
+      showDeepScanResultsPanel(response);
+      var verdict = response.aggregate;
+      var badgeColor;
+      if (verdict.verdict === 'clean') badgeColor = '#22c55e';
+      else if (verdict.verdict === 'warning') badgeColor = '#eab308';
+      else badgeColor = '#ef4444';
+
+      button.textContent = '';
+      var badge = document.createElement('span');
+      badge.style.cssText =
+        'display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;' +
+        'border-radius:50%;background:' + badgeColor + ';color:white;font-size:11px;font-weight:700;flex-shrink:0;margin-right:4px;';
+      badge.textContent = String(verdict.confidence);
+      var labelSpan = document.createElement('span');
+      labelSpan.textContent = verdict.verdict.charAt(0).toUpperCase() + verdict.verdict.slice(1);
+      button.appendChild(badge);
+      button.appendChild(labelSpan);
+      button.disabled = false;
+    } else if (response && response.success) {
+      // AI-only fallback response
       showAIResultsPanel(response.result);
       var result = response.result;
       var badgeColor;
@@ -484,15 +652,16 @@ async function handleVerifyClick(button) {
       button.appendChild(labelSpan);
       button.disabled = false;
     } else {
-      if (response.error === 'NO_API_KEY') {
+      var errorMsg = (response && response.error) || 'Unknown error occurred';
+      if (errorMsg === 'NO_API_KEY') {
         showAIError('No API key configured. Go to extension settings to configure AI.');
       } else {
-        showAIError(response.error || 'Unknown error occurred');
+        showAIError(errorMsg);
       }
       resetVerifyButton(button);
     }
   } catch (error) {
-    console.error('[Vervain] AI analysis error:', error);
+    console.error('[Vervain] Analysis error:', error);
     showAIError('Analysis failed \u2014 try again');
     resetVerifyButton(button);
   }
@@ -629,13 +798,37 @@ async function runAutoDeepScan() {
   }
 
   try {
-    var response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
-    if (response.success) {
+    // Try DEEP_SCAN first
+    var response;
+    var isDeepScan = false;
+    try {
+      var deepScanData = {
+        sender: emailData.senderEmail,
+        domain: extractDomain(emailData.senderEmail),
+        contactName: emailData.senderName,
+        subject: emailData.subject,
+        body: emailData.body,
+        links: emailData.urls || []
+      };
+      response = await chrome.runtime.sendMessage({ type: 'DEEP_SCAN', data: deepScanData });
+      isDeepScan = response && response.aggregate;
+    } catch (deepErr) {
+      console.warn('[Vervain] DEEP_SCAN failed, falling back to AI_ANALYZE:', deepErr);
+    }
+
+    // Fallback to AI_ANALYZE
+    if (!isDeepScan) {
+      response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
+    }
+
+    if (isDeepScan) {
+      showDeepScanResultsPanel(response);
+    } else if (response && response.success) {
       showAIResultsPanel(response.result);
-    } else if (response.error === 'NO_API_KEY') {
+    } else if (response && response.error === 'NO_API_KEY') {
       showAIError('No API key configured. Go to extension settings to configure AI.');
     } else {
-      showAIError(response.error || 'Analysis failed');
+      showAIError((response && response.error) || 'Analysis failed');
     }
   } catch (err) {
     console.error('[Vervain] Auto deep scan error:', err);
