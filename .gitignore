@@ -7,3 +7,5 @@ scripts/
 copy_firstrun_dataset/
 vervain_dataset/
 test-fixtures/
+results/
+.worktrees/

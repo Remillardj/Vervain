@@ -7,7 +7,7 @@ Evaluate each indicator. Mark "detected": true ONLY with clear, specific evidenc
 
 - **Pressure / Polite Predation**: Two sides of the same manipulation. PRESSURE is direct: demanding immediate action, authoritative language, threats of consequences. POLITE PREDATION is subtle: excessive apologies, elaborate courtesy, making the recipient feel socially obligated to comply without questioning.
 - **Urgency**: Anything that restricts reaction time. Artificial deadlines, compressed timelines, language like "act now" or "you have X hours." Legitimate organizations rarely operate on such compressed timelines.
-- **Surprise**: Anything out of the ordinary or unexpected. Unusual requests, communication through unexpected channels, requests that break normal patterns. The element of surprise destabilizes normal pattern recognition.
+- **Surprise**: Internal contradictions or mismatches within the email. The sender claims one identity but the content suggests another. The stated purpose doesn't match the actual request. The email references a relationship, transaction, or event that contradicts other details in the message. Do NOT mark as detected simply because the sender is unfamiliar — an unknown sender alone is not surprise. Look for contradictions: the email says one thing but asks for another, or the claimed context doesn't hold up internally.
 - **High-stakes**: Threats of severe consequences — account closure, legal action, financial loss, security breaches, social damage. Includes SUBTLE forms: leveraging the victim's lack of knowledge, building false credibility (e.g. referencing real locations or details), manipulating perception of physical safety, or putting something important on the line to drive action without verification.
 - **Excitement**: Exclusive or too-good-to-be-true opportunities — prizes, dream job offers, special access. Positive emotions bypass skepticism just as effectively as fear. The goal is to get the recipient to act now without thinking or verifying.
 - **Desperation**: Emergency situations, pleas for help, framing scenarios where the recipient is someone's only hope. Includes SUBTLE forms: "it's just protocol," "sorry, it's what upper management wants," "I know this sucks but I have to do it." Manipulates empathy and the natural desire to help others.
@@ -15,12 +15,12 @@ Evaluate each indicator. Mark "detected": true ONLY with clear, specific evidenc
 ## VERIFY Framework (Systematic Validation)
 Apply each step of the V-E-R-I-F-Y acronym to the email. For each step, set status to "warning" or "ok".
 
-- **view** (View Carefully): Examine who is contacting and how. Check the actual email address, not just the display name. Look for lookalike domains (e.g. "microsft.com"), homograph attacks (Cyrillic characters substituted for Latin), subtle misspellings. Does the sender address match the claimed organization?
-- **evaluate** (Evaluate Context): Does this communication make sense given normal patterns? Is it expected or unexpected? Is the communication channel appropriate for this type of request? Does the timing make sense, or is it unusual (after hours, during known vacation, odd urgency)?
-- **request** (Request Examination): What exactly are they asking the recipient to do? Is the request unusual for this sender or organization? How sensitive is the information or action requested? Does it follow normal documented procedures, or does it ask to circumvent standard processes?
-- **interrogate** (Interrogate Action): Does the stated urgency hold up to scrutiny? What would realistically happen if the recipient took 10 minutes to verify through official channels? Is the stated threat or deadline realistic and verifiable? Would pushing back likely cause frustration or continued pressure?
-- **freeze** (Freeze Indicators): Are there actionable items the recipient should NOT act on without verification? Links to click, attachments to download, credentials or MFA codes to share, money to transfer, system access to grant, phone numbers to call. The more of these present, the higher the risk.
-- **instincts** (Your Instincts / Anomalies): Are there tone or style anomalies — too formal, too casual, oddly pressured for the claimed sender? Does the writing style match what you'd expect from this person or organization? Are there pattern breaks that feel "off" even without a concrete technical indicator?
+- **view** (View Carefully): Check the sender email address for positive indicators of spoofing. Only warn if you detect: a lookalike domain (e.g. "microsft.com" for "microsoft.com"), a homograph attack (Cyrillic or other Unicode characters substituted for Latin), a display name that explicitly contradicts the email domain (e.g. display name says "PayPal Support" but domain is unrelated), or a freemail address (gmail, yahoo, hotmail) claiming to represent an organization. If the domain is simply unfamiliar or you cannot confirm it, that is NOT a warning — an unknown sender alone is not suspicious. Set "ok" unless there is a concrete spoofing indicator.
+- **evaluate** (Evaluate Context): Look for internal inconsistencies in the email's stated context. Does the email reference a specific relationship, account, service, or transaction without enough detail to be credible? Does it claim to be a follow-up when nothing in the content establishes prior contact? Does the formality level mismatch the stated relationship (e.g. a message claiming to be from a close colleague but written in stiff corporate language)? Do NOT warn simply because the email is unsolicited or from an unknown sender — cold outreach, newsletters, and notifications are normal. Only warn when the email's own claimed context contradicts itself.
+- **request** (Request Examination): What is the email asking the recipient to do, and how sensitive or risky is that action? Warn only for sensitive requests: entering credentials or passwords, sharing personal/financial information, transferring money, downloading and running software, granting account or system access, providing MFA/2FA codes, or circumventing a stated process ("don't go through the normal channel, just do X directly"). Routine requests — reply to an email, review a document, visit a website, confirm a subscription, complete a survey — are NOT warnings. The question is not "is there a request?" but "is the request dangerous if complied with by the wrong person?"
+- **interrogate** (Interrogate Action): Challenge the request's justification. Does the stated reason hold up to scrutiny? If the recipient pushed back or took 10 minutes to verify through official channels, would anything bad actually happen? Is the rationale vague, circular, or designed to discourage questioning ("it's just protocol," "compliance requires this")? Warn when the justification is weak or evasive. Set "ok" when the request is self-explanatory with clear reasoning — a shipping notification, a meeting invite with an agenda, or a routine account alert all have obvious, unchallengeable justifications.
+- **freeze** (Freeze Indicators): Are there high-risk actionable items that could cause harm if the email is malicious? Warn only for: links to login/credential pages, links with URL shorteners or obfuscated destinations, attachments that are executable or macro-enabled (.exe, .scr, .xlsm, .docm, .zip), requests to share credentials or MFA codes, requests to transfer money, or requests to call an unfamiliar phone number for urgent action. Do NOT warn for routine links: unsubscribe links, "view in browser" links, links to well-known domains matching the sender's organization, social media links, or marketing/navigation links. Most legitimate emails contain links — their mere presence is not a warning.
+- **instincts** (Your Instincts / Anomalies): Look for detectable anomalies within the email itself. Warn for: tone shifts within the same email (formal opening but casual/urgent closing), grammar or language quality that contradicts the sender's claimed role (e.g. a "CEO" writing with poor grammar and odd phrasing), mixed languages without context, copy-paste artifacts or template placeholders left in (e.g. "[COMPANY NAME]", "Dear {name}"), or a mismatch between the email's emotional tone and its stated content (e.g. a routine invoice notification written with extreme urgency). Do NOT warn simply because the writing style is unfamiliar or imperfect — you have no baseline for this sender. Only warn when something within the email contradicts itself.
 
 ## Strict Scoring Rubric
 Start at 0. Add points for each finding. The final confidence is the sum, capped at 100.
@@ -36,8 +36,8 @@ PUSHED points (weighted by discriminative power):
 VERIFY points (weighted by discriminative power):
 - view warning → +3
 - evaluate warning → +2
-- request warning → +15
-- interrogate warning → +15
+- request warning → +12
+- interrogate warning → +10
 - freeze warning → +3
 - instincts warning → +2
 
@@ -45,8 +45,8 @@ Compute the exact sum. Do NOT round to the nearest 5 or 10. Report the precise t
 
 Labels based on final score:
 - 0–20 → "safe"
-- 21–45 → "caution"
-- 46–100 → "suspicious"
+- 21–39 → "caution"
+- 40–100 → "suspicious"
 
 ## Response Format
 Respond with ONLY a valid JSON object (no markdown fences, no text outside the JSON):
@@ -67,7 +67,7 @@ Respond with ONLY a valid JSON object (no markdown fences, no text outside the J
   "reasoning": "<2-3 sentence summary>"
 }
 
-Always include ALL 6 VERIFY flags (view, evaluate, request, interrogate, freeze, instincts) in every response. Be conservative: only mark PUSHED indicators as detected when there is unambiguous evidence. A normal newsletter, marketing email, or routine communication with no manipulation tactics should score very low. Remember that sophisticated attacks may appear completely legitimate on the surface — evaluate the underlying intent and behavioral patterns, not just surface-level technical indicators.`;
+Always include ALL 6 VERIFY flags (view, evaluate, request, interrogate, freeze, instincts) in every response. Be conservative with both PUSHED and VERIFY: only mark PUSHED indicators as detected when there is unambiguous evidence, and only set VERIFY flags to "warning" when there is a concrete, specific indicator — not because you lack context to confirm something. Unknown senders, unsolicited emails, and the presence of links are all normal. Default to "ok" unless the email gives you a specific reason to warn. A normal newsletter, marketing email, or routine communication with no manipulation tactics should score very low. Remember that sophisticated attacks may appear completely legitimate on the surface — evaluate the underlying intent and behavioral patterns, not just surface-level technical indicators.`;
 
 export interface EmailData {
   senderName: string;
