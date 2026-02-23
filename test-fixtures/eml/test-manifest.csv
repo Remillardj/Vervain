@@ -1,0 +1,3 @@
+file,expected_label
+synthetic/clean-newsletter.eml,safe
+synthetic/homograph-sender.eml,suspicious

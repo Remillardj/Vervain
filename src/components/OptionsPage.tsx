@@ -5,14 +5,29 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff } from 'lucide-react';
+import { Settings, Info, Plus, Trash2, Globe, AlertTriangle, User, Brain, Eye, EyeOff, Shield, Lock, RefreshCw, HelpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import TrustedContactsManager from './TrustedContactsManager';
 import DomainsCSVImport from './DomainsCSVImport';
+
+const InfoTip = ({ children }: { children: React.ReactNode }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <button type="button" className="text-muted-foreground hover:text-foreground inline-flex">
+        <HelpCircle className="h-4 w-4" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom" className="max-w-xs text-sm">
+      {children}
+    </TooltipContent>
+  </Tooltip>
+);
 
 const AI_MODELS: Record<string, Array<{ value: string; label: string }>> = {
   anthropic: [
@@ -36,13 +51,18 @@ const OptionsPage = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const { toast } = useToast();
-  const [autoAddDomains, setAutoAddDomains] = useState(false); // New state for auto-add domains
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiProvider, setAiProvider] = useState<'anthropic' | 'openai'>('anthropic');
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState('claude-sonnet-4-5-20250929');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [autoTI, setAutoTI] = useState(false);
+  const [autoAI, setAutoAI] = useState(false);
+  const [virusTotalApiKey, setVirusTotalApiKey] = useState('');
+  const [showVTApiKey, setShowVTApiKey] = useState(false);
+  const [enabledThreatFeeds, setEnabledThreatFeeds] = useState<string[]>(['phishtank', 'urlhaus', 'threatfox', 'openphish']);
+  const [lockedKeys, setLockedKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadSettings();
@@ -63,11 +83,30 @@ const OptionsPage = () => {
         setContactDetectionEnabledState(data.contactDetectionEnabled !== false);
       }
 
-      setAutoAddDomains(data.autoAddDomains || false); // Load auto-add domains setting
       setAiEnabled(data.aiEnabled || false);
       setAiProvider(data.aiProvider || 'anthropic');
       setAiApiKey(data.aiApiKey || '');
       setAiModel(data.aiModel || 'claude-sonnet-4-5-20250929');
+      setAutoTI(data.autoTI || false);
+      setAutoAI(data.autoAI || false);
+      setVirusTotalApiKey(data.virusTotalApiKey || '');
+      setEnabledThreatFeeds(data.enabledThreatFeeds || ['phishtank', 'urlhaus', 'threatfox', 'openphish']);
+
+      // Check managed storage for locked keys
+      if (typeof chrome !== 'undefined' && chrome.storage?.managed) {
+        try {
+          chrome.storage.managed.get(null, (managed) => {
+            if (chrome.runtime.lastError || !managed) return;
+            const locked = new Set<string>();
+            for (const key of Object.keys(managed)) {
+              locked.add(key);
+            }
+            setLockedKeys(locked);
+          });
+        } catch {
+          // Managed storage not available
+        }
+      }
     } catch (error) {
       showToast('Failed to load settings', 'error');
     }
@@ -236,16 +275,6 @@ const OptionsPage = () => {
     }
   };
 
-  const saveAutoAddDomainsSetting = async (value: boolean) => {
-    try {
-      await saveData({ autoAddDomains: value });
-      setAutoAddDomains(value);
-      showToast('Auto-add domains setting updated', 'success');
-    } catch (error) {
-      showToast('Failed to update auto-add domains setting', 'error');
-    }
-  };
-
   const handleToggleAiEnabled = async () => {
     try {
       const newState = !aiEnabled;
@@ -288,7 +317,54 @@ const OptionsPage = () => {
     }
   };
 
+  const handleToggleAutoTI = async () => {
+    try {
+      const newState = !autoTI;
+      await saveData({ autoTI: newState });
+      setAutoTI(newState);
+      showToast(newState ? 'Auto known-threats check enabled' : 'Auto known-threats check disabled', 'success');
+    } catch (error) {
+      showToast('Failed to update setting', 'error');
+    }
+  };
+
+  const handleToggleAutoAI = async () => {
+    try {
+      const newState = !autoAI;
+      await saveData({ autoAI: newState });
+      setAutoAI(newState);
+      showToast(newState ? 'Auto AI Analysis enabled' : 'Auto AI Analysis disabled', 'success');
+    } catch (error) {
+      showToast('Failed to update setting', 'error');
+    }
+  };
+
+  const handleSaveVTApiKey = async () => {
+    try {
+      await saveData({ virusTotalApiKey });
+      showToast('VirusTotal API key saved', 'success');
+    } catch (error) {
+      showToast('Failed to save API key', 'error');
+    }
+  };
+
+  const handleToggleFeed = async (feedId: string) => {
+    const updated = enabledThreatFeeds.includes(feedId)
+      ? enabledThreatFeeds.filter(f => f !== feedId)
+      : [...enabledThreatFeeds, feedId];
+    try {
+      await saveData({ enabledThreatFeeds: updated });
+      setEnabledThreatFeeds(updated);
+      showToast('Threat feed settings updated', 'success');
+    } catch (error) {
+      showToast('Failed to update feed settings', 'error');
+    }
+  };
+
+  const isLocked = (key: string) => lockedKeys.has(key);
+
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="container mx-auto py-8 px-4 max-w-4xl">
       <header className="mb-8 text-center">
         <div className="flex flex-col items-center space-y-4 text-center">
@@ -296,7 +372,7 @@ const OptionsPage = () => {
             <img src="/vervain.png" alt="Vervain Logo" className="h-8 w-8" />
             <h1 className="text-3xl font-bold tracking-tight text-[#4B2EE3]">Vervain Settings</h1>
           </div>
-          <p className="text-[#4B2EE3] max-w-lg mx-auto font-medium">
+          <p className="text-[#4B2EE3] max-w-xl mx-auto font-medium">
             Configure your protection settings to defend against phishing attempts that target your domains.
           </p>
         </div>
@@ -308,7 +384,7 @@ const OptionsPage = () => {
         value={activeTab} 
         onValueChange={setActiveTab}
       >
-        <TabsList className="grid w-full grid-cols-4 mb-8">
+        <TabsList className="grid w-full grid-cols-5 mb-8">
           <TabsTrigger value="general" className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
             <span>General</span>
@@ -320,6 +396,10 @@ const OptionsPage = () => {
           <TabsTrigger value="contacts" className="flex items-center gap-2">
             <User className="h-4 w-4" />
             <span>Contacts</span>
+          </TabsTrigger>
+          <TabsTrigger value="threatintel" className="flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            <span>Known Threats</span>
           </TabsTrigger>
           <TabsTrigger value="ai" className="flex items-center gap-2">
             <Brain className="h-4 w-4" />
@@ -375,11 +455,17 @@ const OptionsPage = () => {
                     Detect typosquatting, homograph attacks, and domain spoofing
                   </p>
                 </div>
-                <Switch
-                  checked={domainDetectionEnabled}
-                  onCheckedChange={handleToggleDomainDetection}
-                  aria-label="Toggle domain detection"
-                />
+                <div className="flex items-center gap-2">
+                  {isLocked('domainDetectionEnabled') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={domainDetectionEnabled}
+                    onCheckedChange={handleToggleDomainDetection}
+                    disabled={isLocked('domainDetectionEnabled')}
+                    aria-label="Toggle domain detection"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
@@ -389,36 +475,41 @@ const OptionsPage = () => {
                     Alert when someone uses a trusted contact's name with a different email
                   </p>
                 </div>
-                <Switch
-                  checked={contactDetectionEnabled}
-                  onCheckedChange={handleToggleContactDetection}
-                  aria-label="Toggle contact detection"
-                />
+                <div className="flex items-center gap-2">
+                  {isLocked('contactDetectionEnabled') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={contactDetectionEnabled}
+                    onCheckedChange={handleToggleContactDetection}
+                    disabled={isLocked('contactDetectionEnabled')}
+                    aria-label="Toggle contact detection"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h4 className="font-medium">Auto AI Analysis</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically run AI analysis on every email
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isLocked('aiAutoScan') && (
+                    <Lock className="h-4 w-4 text-muted-foreground" title="Controlled by your organization" />
+                  )}
+                  <Switch
+                    checked={autoAI}
+                    onCheckedChange={handleToggleAutoAI}
+                    disabled={isLocked('aiAutoScan')}
+                    aria-label="Toggle auto AI analysis"
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5 text-[#4B2EE3]" />
-                Auto-Add Domains
-              </CardTitle>
-              <CardDescription>
-                Automatically add domains from emails to your monitored list.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Switch 
-                checked={autoAddDomains}
-                onCheckedChange={saveAutoAddDomainsSetting}
-                aria-label="Toggle auto-add domains"
-              />
-              <p className="text-sm text-muted-foreground mt-2">
-                When enabled, Vervain will automatically add domains found in emails to your monitored list.
-              </p>
-            </CardContent>
-          </Card>
         </TabsContent>
         
         <TabsContent value="domains" className="space-y-6">
@@ -428,8 +519,12 @@ const OptionsPage = () => {
                 <Plus className="h-5 w-5 text-[#4B2EE3]" />
                 Additional Domains
               </CardTitle>
-              <CardDescription>
+              <CardDescription className="flex items-center gap-1.5">
                 Add other domains you want to monitor for phishing attempts
+                <InfoTip>
+                  <p>For each domain, Vervain monitors for look-alike domains, typosquatting, and homoglyph attacks.</p>
+                  <p className="mt-1">Use CSV Import below to add multiple domains from a spreadsheet.</p>
+                </InfoTip>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -492,6 +587,7 @@ const OptionsPage = () => {
                             onCheckedChange={() => handleToggleDomainSelection(domain)}
                           />
                           <span className="font-medium">{domain}</span>
+                          <Badge variant="outline" className="text-xs">Local</Badge>
                         </div>
                         <Button
                           variant="ghost"
@@ -510,33 +606,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
           
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                Important Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  For each additional domain you add, Vervain will monitor for:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Look-alike domains that may be used in phishing attempts</li>
-                  <li>Typosquatting variations of the domain name</li>
-                  <li>Domains that use homoglyphs or special characters to mimic your domain</li>
-                </ul>
-                <p className="mt-4">
-                  Adding too many domains may affect performance. Focus on your most important domains.
-                </p>
-                <p className="mt-4">
-                  <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple domains from a spreadsheet.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* CSV Import Manager for Domains */}
           <DomainsCSVImport
             onDomainsImport={handleDomainsImport}
@@ -546,33 +615,74 @@ const OptionsPage = () => {
 
         <TabsContent value="contacts" className="space-y-6">
           <TrustedContactsManager />
+        </TabsContent>
+
+        <TabsContent value="threatintel" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5 text-[#4B2EE3]" />
+                Known Threats
+              </CardTitle>
+              <CardDescription className="flex items-center gap-1.5">
+                Vervain automatically checks every sender against known phishing and malware databases
+                <InfoTip>
+                  <p className="font-medium mb-1">How it works</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><strong>Quick check</strong> — Fast lookup against known threat databases (milliseconds)</li>
+                    <li><strong>Confirmation</strong> — If a match is found, Vervain double-checks with the original source</li>
+                  </ul>
+                  <p className="mt-1.5">Databases refresh automatically. All data stays on your device.</p>
+                </InfoTip>
+              </CardDescription>
+            </CardHeader>
+          </Card>
 
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                About Trusted Contacts
+                <Shield className="h-5 w-5 text-[#4B2EE3]" />
+                VirusTotal
               </CardTitle>
+              <CardDescription>
+                Additional domain reputation checking
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  Adding trusted contacts helps Vervain protect you from impersonation attacks:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Vervain will flag emails where someone uses a trusted contact's name but with a different email address</li>
-                  <li>This helps you detect when attackers try to impersonate people you know and trust</li>
-                  <li>The system compares both the display name and email address to detect spoofing attempts</li>
-                </ul>
-                <p>
-                  Add contacts that frequently email you and who might be targets for impersonation, such as colleagues, managers, or service providers.
-                </p>
-                <p className="mt-4">
-                  <strong>Pro Tip:</strong> Use the CSV Import Manager below to quickly add multiple contacts from a spreadsheet.
-                </p>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="vt-api-key">VirusTotal API Key</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="vt-api-key"
+                      type={showVTApiKey ? 'text' : 'password'}
+                      value={virusTotalApiKey}
+                      onChange={(e) => setVirusTotalApiKey(e.target.value)}
+                      placeholder="Enter your VirusTotal API key"
+                      disabled={isLocked('virusTotalApiKey')}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowVTApiKey(!showVTApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showVTApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button onClick={handleSaveVTApiKey} disabled={isProcessing || isLocked('virusTotalApiKey')}>
+                    Save Key
+                  </Button>
+                </div>
+                {isLocked('virusTotalApiKey') && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Managed by your organization
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
+
         </TabsContent>
 
         <TabsContent value="ai" className="space-y-6">
@@ -580,18 +690,27 @@ const OptionsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Brain className="h-5 w-5 text-[#4B2EE3]" />
-                AI Phishing Analysis
+                VERIFY My Suspicious
               </CardTitle>
-              <CardDescription>
-                Use AI to analyze emails for phishing indicators using the PUSHED and VERIFY frameworks
+              <CardDescription className="flex items-center gap-1.5">
+                Use AI to check if a suspicious email is a phishing attempt
+                <InfoTip>
+                  <p className="font-medium mb-1">How it works</p>
+                  <p>When you click "VERIFY" on an email in Gmail, Vervain sends it to your AI provider which checks for:</p>
+                  <ul className="list-disc pl-4 space-y-1 mt-1">
+                    <li><strong>PUSHED</strong> — Emotional manipulation (pressure, urgency, high-stakes threats)</li>
+                    <li><strong>VERIFY</strong> — Technical red flags (fake domains, suspicious links, unusual requests)</li>
+                  </ul>
+                  <p className="mt-1.5">You get a risk score (0-100) and a breakdown of what was found. Your API key is stored locally.</p>
+                </InfoTip>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-2">
-                  <h4 className="font-medium">Enable AI Analysis</h4>
+                  <h4 className="font-medium">Enable VERIFY</h4>
                   <p className="text-sm text-muted-foreground">
-                    Show "Analyze with AI" button on emails in Gmail
+                    Show "VERIFY" button on emails in Gmail
                   </p>
                 </div>
                 <Switch
@@ -661,31 +780,6 @@ const OptionsPage = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="h-5 w-5 text-[#4B2EE3]" />
-                How It Works
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm space-y-2">
-                <p>
-                  When you click "Analyze with AI" on an email in Gmail, Vervain sends the email content to your configured AI provider for analysis using two frameworks:
-                </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>PUSHED</strong> — Detects emotional manipulation: Pressure, Urgency, Surprise, High-stakes, Excitement, Desperation</li>
-                  <li><strong>VERIFY</strong> — Checks technical indicators: sender legitimacy, link safety, attachment risks, and sensitive data requests</li>
-                </ul>
-                <p className="mt-2">
-                  You'll receive a confidence score (0-100) and detailed breakdown of any suspicious indicators found.
-                </p>
-                <p className="mt-2 text-muted-foreground">
-                  Note: You provide your own API key. Standard API usage charges from your provider apply.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
       
@@ -695,6 +789,7 @@ const OptionsPage = () => {
         </p>
       </footer>
     </div>
+    </TooltipProvider>
   );
 };
 

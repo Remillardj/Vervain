@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "protectedDomains": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Domains to monitor for phishing"
+    },
+    "trustedContacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        },
+        "required": ["name", "email"]
+      }
+    },
+    "configUrl": { "type": "string" },
+    "configAuthToken": { "type": "string" },
+    "configRefreshIntervalMinutes": { "type": "integer", "minimum": 5 },
+    "aiProvider": { "type": "string", "enum": ["anthropic", "openai"] },
+    "aiApiKey": { "type": "string" },
+    "aiModel": { "type": "string" },
+    "aiAutoScan": { "type": "boolean" },
+    "tiAutoScan": { "type": "boolean" },
+    "virusTotalApiKey": { "type": "string" },
+    "enabledThreatFeeds": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "domainDetectionEnabled": { "type": "boolean" },
+    "contactDetectionEnabled": { "type": "boolean" }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vervain",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Protect yourself from phishing emails by detecting domain spoofing and homograph attacks",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
@@ -27,8 +27,16 @@
   "host_permissions": [
     "https://mail.google.com/*",
     "https://api.anthropic.com/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://www.virustotal.com/*",
+    "https://data.phishtank.com/*",
+    "https://urlhaus.abuse.ch/*",
+    "https://threatfox-api.abuse.ch/*",
+    "https://openphish.com/*"
   ],
+  "storage": {
+    "managed_schema": "managed_schema.json"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -42,8 +50,8 @@
   "options_page": "options.html",
   "web_accessible_resources": [
     {
-      "resources": ["assets/*", "domain-editor.html"],
-      "matches": ["<all_urls>"]
+      "resources": ["assets/*"],
+      "matches": ["https://mail.google.com/*"]
     }
   ]
 }

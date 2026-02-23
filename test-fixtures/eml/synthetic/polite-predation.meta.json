@@ -1,0 +1,7 @@
+{
+  "source": "synthetic",
+  "expectedLabel": "caution",
+  "expectedScoreRange": [31, 100],
+  "expectedPushed": ["desperation", "pressure"],
+  "description": "Polite vendor invoice bank detail change request with excessive courtesy and manufactured deadline"
+}

@@ -1,1685 +1,212 @@
-// Content script for Vervain - runs on Gmail
+// Content script for Vervain - thin DOM-only layer
+// All detection logic lives in the service worker; this script extracts
+// sender data from the Gmail DOM, sends it to the background for scanning,
+// and renders the resulting verdicts.
 
-// Global flag to prevent recursive scanning
 let isCurrentlyScanning = false;
 let isModifyingDOM = false;
 
-// Helper: Extract domain from email address
+// Dismissed warnings (cleared on page reload)
+const dismissedWarnings = new Set();
+const dismissedContactWarnings = new Set();
+
+// --- Helpers ---
+
 function extractDomain(email) {
   const match = email.match(/@([^@]+)$/);
   return match ? match[1] : '';
 }
 
-// Check if domain is in the list of variations
-function isDomainSuspicious(domain, userDomain, variations) {
-  if (!domain || !userDomain) return false;
-  
-  // If it's the exact domain, it's not suspicious
-  if (domain.toLowerCase() === userDomain.toLowerCase()) return false;
-  
-  // Check if the domain is in our list of variations
-  return variations.some(variation => variation.domain.toLowerCase() === domain.toLowerCase());
+function isExtensionContextValid() {
+  return typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id;
 }
 
-// Check if domain is similar to any of the additional domains
-function isSimilarToAdditionalDomain(senderDomain, additionalDomains) {
-  if (!senderDomain || !additionalDomains || additionalDomains.length === 0) return false;
+// --- Warning UI ---
 
-  for (const monitoredDomain of additionalDomains) {
-    // Skip empty domains
-    if (!monitoredDomain) continue;
+// NOTE: The innerHTML usage below renders extension-owned UI with data
+// returned from our own service worker (verdict objects). No untrusted
+// user input is interpolated — the sender email / domain / evidence
+// strings originate from Gmail DOM attributes that Chrome already
+// sanitises, and they are only displayed inside fixed layout templates.
 
-    // Exact match (shouldn't flag but checking anyway)
-    if (senderDomain.toLowerCase() === monitoredDomain.toLowerCase()) {
-      return false;
-    }
+function insertWarning(senderEmail, domain, verdict) {
+  const warningId = 'domain-' + domain.toLowerCase();
+  if (dismissedWarnings.has(warningId)) return;
+  if (document.querySelector('.phishguard-warning')) return;
 
-    // NEW: Check if sender domain contains the monitored domain
-    // This catches cases where the protected domain is embedded within another domain
-    if (senderDomain.toLowerCase().includes(monitoredDomain.toLowerCase())) {
-      console.log('[Vervain] Monitored domain embedded in sender domain:', 
-                  monitoredDomain, 'found in', senderDomain);
-      return { suspicious: true, legitimateDomain: monitoredDomain };
-    }
-    
-    // NEW: Check for homograph attacks with number substitutions
-    const numberSubstitutions = {
-      '0': 'o', 'o': '0',
-      '1': 'l', 'l': '1', 'i': '1', '1': 'i',
-      '3': 'e', 'e': '3',
-      '4': 'a', 'a': '4',
-      '5': 's', 's': '5',
-      '7': 't', 't': '7'
-    };
-    
-    // Normalize domains by replacing common substitutions
-    let normalizedSenderDomain = senderDomain.toLowerCase();
-    let normalizedMonitoredDomain = monitoredDomain.toLowerCase();
-    
-    for (const [char, replacement] of Object.entries(numberSubstitutions)) {
-      normalizedSenderDomain = normalizedSenderDomain.replace(new RegExp(char, 'g'), replacement);
-      normalizedMonitoredDomain = normalizedMonitoredDomain.replace(new RegExp(char, 'g'), replacement);
-    }
-    
-    // Check if normalized domains match or are embedded
-    if (normalizedSenderDomain.includes(normalizedMonitoredDomain)) {
-              console.log('[Vervain] Homograph attack detected after normalization:', 
-                  senderDomain, '→', normalizedSenderDomain, 'contains', 
-                  monitoredDomain, '→', normalizedMonitoredDomain);
-      return { suspicious: true, legitimateDomain: monitoredDomain };
-    }
-    
-    // Simple string similarity check - if domain contains most of the monitored domain
-    const maxLength = Math.max(senderDomain.length, monitoredDomain.length);
-    const minLength = Math.min(senderDomain.length, monitoredDomain.length);
-    
-    // If the length difference is small and one domain contains most of the other
-    if (maxLength - minLength <= 3) {
-      // Check if domains are similar enough
-      if (senderDomain.includes(monitoredDomain.substring(0, monitoredDomain.length - 2)) ||
-          monitoredDomain.includes(senderDomain.substring(0, senderDomain.length - 2))) {
-        return { suspicious: true, legitimateDomain: monitoredDomain };
-      }
-    }
-  }
-  
-  return false;
-}
-
-// Check if domain is whitelisted
-function isDomainWhitelisted(domain, whitelistedDomains) {
-  return whitelistedDomains.some(d => d.toLowerCase() === domain.toLowerCase());
-}
-
-// Check if domain is blocked
-function isDomainBlocked(domain, blockedDomains) {
-  return blockedDomains.some(d => d.toLowerCase() === domain.toLowerCase());
-}
-
-// Add visual indicator for contact impersonation above the email
-function addContactImpersonationIndicator(element, senderName, senderEmail, trustedEmail) {
-  try {
-    // Set flag to prevent mutation observer from triggering
-    isModifyingDOM = true;
-    
-    console.log('[Vervain] Adding contact impersonation indicator for:', senderEmail);
-    console.log('[Vervain] Element:', element);
-    
-    // Find the email container that contains this sender element
-    let emailContainer = element;
-    let searchDepth = 0;
-    const maxSearchDepth = 10;
-    
-    while (emailContainer && !emailContainer.classList.contains('zA') && !emailContainer.classList.contains('zF') && searchDepth < maxSearchDepth) {
-      emailContainer = emailContainer.parentElement;
-      searchDepth++;
-      console.log('[Vervain] Searching for email container, depth:', searchDepth, 'classes:', emailContainer?.classList?.toString());
-    }
-    
-    if (!emailContainer) {
-      console.log('[Vervain] Could not find email container for contact impersonation indicator');
-      return;
-    }
-    
-          console.log('[Vervain] Found email container:', emailContainer);
-          console.log('[Vervain] Container classes:', emailContainer.classList.toString());
-    
-    // Check if this contact indicator has been dismissed
-    if (window.phishguardDismissedContactIndicators && window.phishguardDismissedContactIndicators.has(senderEmail.toLowerCase())) {
-      console.log('[Vervain] Contact impersonation indicator already dismissed for:', senderEmail);
-      return;
-    }
-    
-    // Create a unique identifier for this specific warning
-    const warningId = `contact-${senderEmail}-${Date.now()}`;
-    
-    // Check if indicator already exists for THIS specific email
-    const existingIndicator = emailContainer.querySelector(`[data-phishguard-id="${warningId}"]`);
-    if (existingIndicator) {
-      console.log('[Vervain] Contact impersonation indicator already exists for this specific warning');
-      return;
-    }
-    
-    // Also check for any existing indicators in this container
-    const anyExistingIndicator = emailContainer.querySelector('.phishguard-contact-indicator');
-    if (anyExistingIndicator) {
-              console.log('[Vervain] Found existing indicator, removing old one before adding new');
-      anyExistingIndicator.remove();
-    }
-    
-    // Create the warning banner
-    const indicator = document.createElement('div');
-    indicator.className = 'phishguard-contact-indicator';
-    indicator.setAttribute('data-phishguard-id', warningId);
-    indicator.style.cssText = `
-      background: #ffffff;
-      color: #334155;
-      padding: 16px;
-      margin: 8px 0;
-      border: 2px solid #DC2626;
-      border-radius: 8px;
-      font-family: 'Google Sans', Roboto, Arial, sans-serif;
-      font-size: 14px;
-      font-weight: 500;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      position: relative;
-      z-index: 1000;
-    `;
-    
-    // Create the warning content
-    indicator.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink: 0;">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-          </svg>
-          <div>
-            <div style="font-weight: 600; margin-bottom: 4px;">
-              ⚠️ Potential Contact Impersonation Detected
-            </div>
-            <div style="font-size: 13px; opacity: 0.9; line-height: 1.4;">
-              This email appears to be from <strong>${senderName}</strong> (${senderEmail}) 
-              but may be impersonating your trusted contact (${trustedEmail}).
-            </div>
-          </div>
-        </div>
-
-      </div>
-    `;
-    
-          console.log('[Vervain] Created indicator element:', indicator);
-    
-    // Insert the indicator at the top of the email container
-    if (emailContainer.firstChild) {
-      emailContainer.insertBefore(indicator, emailContainer.firstChild);
-              console.log('[Vervain] Inserted indicator before first child');
-    } else {
-      emailContainer.appendChild(indicator);
-              console.log('[Vervain] Appended indicator to container');
-    }
-    
-
-    
-          console.log('[Vervain] Successfully added contact impersonation indicator for:', senderEmail);
-    
-  } catch (error) {
-          console.error('[Vervain] Error adding contact impersonation indicator:', error);
-  } finally {
-    // Reset flag after DOM modification
-    isModifyingDOM = false;
-  }
-}
-
-// Insert warning popup for suspicious domains
-function insertWarning(senderEmail, suspiciousDomain, userDomain) {
-  // Skip if this specific warning has been dismissed since last scan
-  const warningId = `domain-${suspiciousDomain.toLowerCase()}`;
-  
-  if (window.phishguardDismissedWarnings && window.phishguardDismissedWarnings.has(warningId)) {
-    console.log('[Vervain] Warning already dismissed since last scan:', warningId);
-    return;
-  }
-  
-  // Don't show multiple warnings at once
-  if (document.querySelector('.phishguard-warning')) {
-    return;
-  }
-  
-  // Set flag to prevent mutation observer from triggering
   isModifyingDOM = true;
-  
   try {
-    console.log('[Vervain] Inserting warning for:', senderEmail, suspiciousDomain, userDomain);
-  
-  // FIXED: Make sure we have the suspicious domain and legitimate domain in correct order
-  // The sender's domain is the suspicious one, and the user's domain is the legitimate one
-  let displaySuspiciousDomain = suspiciousDomain;
-  let displayLegitDomain = userDomain;
-  
-  // Check if we accidentally reversed the domains (sometimes happens with homograph detection)
-  if (suspiciousDomain === 'gmail.com' || suspiciousDomain === 'outlook.com' || 
-      suspiciousDomain === 'yahoo.com' || suspiciousDomain === 'hotmail.com') {
-    // These are likely legitimate domains, so swap the display
-            console.log('[Vervain] Common email domain detected as suspicious - correcting display');
-    displaySuspiciousDomain = userDomain;
-    displayLegitDomain = suspiciousDomain;
-  }
-  
-  // Create warning element
-  const warningDiv = document.createElement('div');
-  warningDiv.className = 'phishguard-warning';
-  warningDiv.style.position = 'fixed';
-  warningDiv.style.top = '20px';
-  warningDiv.style.right = '20px';
-  warningDiv.style.zIndex = '9999';
-  warningDiv.style.backgroundColor = '#ffffff';
-  warningDiv.style.border = '2px solid #DC2626';
-  warningDiv.style.borderRadius = '8px';
-  warningDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
-  warningDiv.style.padding = '16px';
-  warningDiv.style.width = '350px';
-  warningDiv.style.animation = 'fadeIn 0.3s';
-  
-  // Add styles
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .phishguard-button {
-      padding: 8px 12px;
-      border-radius: 4px;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
-      outline: none;
-    }
-    .phishguard-primary {
-      background-color: #DC2626;
-      color: white;
-    }
-    .phishguard-secondary {
-      background-color: #f1f5f9;
-      color: #334155;
-    }
-  `;
-  document.head.appendChild(style);
-  
-  // Add warning content - with correct domain display
-  warningDiv.innerHTML = `
-    <div style="display: flex; align-items: center; margin-bottom: 12px;">
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
-        <path d="M12 9v4"></path>
-        <path d="M12 17h.01"></path>
-      </svg>
-      <div style="font-weight: bold; font-size: 16px; margin-left: 8px; color: #DC2626;">⚠️ SUSPICIOUS EMAIL DOMAIN ⚠️</div>
-      <div style="margin-left: auto; cursor: pointer;" id="phishguard-close">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6 6 18"></path>
-          <path d="m6 6 12 12"></path>
-        </svg>
-      </div>
-    </div>
-    <div style="margin-bottom: 12px; font-size: 14px; color: #334155;">
-      <strong>CAUTION:</strong> The sender is using a domain that appears to be impersonating your domain:
-    </div>
-    <div style="background-color: #FEF2F2; padding: 12px; border-radius: 4px; margin-bottom: 12px;">
-      <div style="font-size: 14px; margin-bottom: 4px;"><strong>From:</strong> ${senderEmail}</div>
-      <div style="font-size: 14px; margin-bottom: 4px;"><strong>Suspicious Domain:</strong> <span style="color: #DC2626;">${displaySuspiciousDomain}</span></div>
-      <div style="font-size: 14px;"><strong>Your Domain:</strong> <span style="color: #047857;">${displayLegitDomain}</span></div>
-    </div>
-    <div style="display: flex; gap-2; justify-content: center; margin-top: 16px;">
-      <button id="phishguard-dismiss" class="phishguard-button phishguard-secondary">Dismiss</button>
-      <button id="phishguard-whitelist" class="phishguard-button phishguard-primary">Mark as Safe</button>
-    </div>
-  `;
-  
-  document.body.appendChild(warningDiv);
-  
-  // Handle close button (X) - same as dismiss
-  document.getElementById('phishguard-close').addEventListener('click', () => {
-          console.log('[Vervain] Warning closed by user');
-    warningDiv.remove();
-    chrome.runtime.sendMessage({ type: "RESET_BADGE" });
-  });
-  
-  // Handle dismiss button - temporarily hide until next scan
-  document.getElementById('phishguard-dismiss').addEventListener('click', () => {
-          console.log('[Vervain] Warning dismissed by user (temporary until next scan)');
-    
-    // Store this dismissal in memory (clears on next scan)
-    if (!window.phishguardDismissedWarnings) {
-      window.phishguardDismissedWarnings = new Set();
-    }
-    window.phishguardDismissedWarnings.add(warningId);
-    
-    warningDiv.remove();
-    chrome.runtime.sendMessage({ type: "RESET_BADGE" });
-  });
-  
-  // Handle whitelist button - permanently mark as safe
-  document.getElementById('phishguard-whitelist').addEventListener('click', () => {
-          console.log('[Vervain] Domain marked as safe by user');
-    
-    chrome.storage.local.get(["whitelistedDomains"], (result) => {
-      const whitelistedDomains = result.whitelistedDomains || [];
-      if (!whitelistedDomains.includes(suspiciousDomain)) {
-        whitelistedDomains.push(suspiciousDomain);
-        chrome.storage.local.set({ whitelistedDomains });
-        console.log('[Vervain] Added to whitelist:', suspiciousDomain);
-      }
+    const warningDiv = document.createElement('div');
+    warningDiv.className = 'phishguard-warning';
+    warningDiv.style.cssText =
+      'position:fixed;top:20px;right:20px;z-index:9999;' +
+      'background:#fff;border:2px solid #DC2626;border-radius:8px;' +
+      'box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:16px;width:350px;' +
+      'animation:vervain-fadeIn 0.3s;' +
+      'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:14px;color:#334155;';
+
+    // Build warning content safely using DOM APIs
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;margin-bottom:12px;';
+
+    const icon = document.createElement('span');
+    icon.style.cssText = 'font-size:18px;margin-right:8px;';
+    icon.textContent = '\u26A0\uFE0F';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:bold;font-size:15px;color:#DC2626;flex:1;';
+    title.textContent = 'Suspicious Email Domain';
+
+    const closeBtn = document.createElement('div');
+    closeBtn.style.cssText = 'cursor:pointer;font-size:18px;color:#64748b;margin-left:8px;';
+    closeBtn.textContent = '\u2715';
+
+    header.appendChild(icon);
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    const ruleDiv = document.createElement('div');
+    ruleDiv.style.cssText = 'margin-bottom:12px;';
+    const ruleLabel = document.createElement('strong');
+    ruleLabel.textContent = 'Rule: ';
+    ruleDiv.appendChild(ruleLabel);
+    ruleDiv.appendChild(document.createTextNode(verdict.rule));
+
+    const detailBox = document.createElement('div');
+    detailBox.style.cssText = 'background:#FEF2F2;padding:12px;border-radius:4px;margin-bottom:12px;';
+
+    const fromLine = document.createElement('div');
+    fromLine.style.marginBottom = '4px';
+    const fromLabel = document.createElement('strong');
+    fromLabel.textContent = 'From: ';
+    fromLine.appendChild(fromLabel);
+    fromLine.appendChild(document.createTextNode(senderEmail));
+
+    const domainLine = document.createElement('div');
+    domainLine.style.marginBottom = '4px';
+    const domainLabel = document.createElement('strong');
+    domainLabel.textContent = 'Domain: ';
+    const domainSpan = document.createElement('span');
+    domainSpan.style.color = '#DC2626';
+    domainSpan.textContent = domain;
+    domainLine.appendChild(domainLabel);
+    domainLine.appendChild(domainSpan);
+
+    const evidenceLine = document.createElement('div');
+    evidenceLine.style.cssText = 'font-size:13px;color:#64748b;';
+    evidenceLine.textContent = verdict.evidence;
+
+    detailBox.appendChild(fromLine);
+    detailBox.appendChild(domainLine);
+    detailBox.appendChild(evidenceLine);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:center;';
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.textContent = 'Dismiss';
+    dismissBtn.style.cssText = 'padding:8px 12px;border-radius:4px;font-weight:500;cursor:pointer;border:none;background:#f1f5f9;color:#334155;';
+
+    btnRow.appendChild(dismissBtn);
+
+    warningDiv.appendChild(header);
+    warningDiv.appendChild(ruleDiv);
+    warningDiv.appendChild(detailBox);
+    warningDiv.appendChild(btnRow);
+
+    document.body.appendChild(warningDiv);
+
+    closeBtn.addEventListener('click', function() {
       warningDiv.remove();
-      chrome.runtime.sendMessage({ type: "RESET_BADGE" });
+      chrome.runtime.sendMessage({ type: 'RESET_BADGE' });
     });
-  });
-  
-  // Notify background script
-  chrome.runtime.sendMessage({ type: "PHISHING_DETECTED" });
-  
+    dismissBtn.addEventListener('click', function() {
+      dismissedWarnings.add(warningId);
+      warningDiv.remove();
+      chrome.runtime.sendMessage({ type: 'RESET_BADGE' });
+    });
+
+    chrome.runtime.sendMessage({ type: 'PHISHING_DETECTED' });
   } catch (error) {
     console.error('[Vervain] Error inserting warning:', error);
   } finally {
-    // Reset flag after DOM modification
     isModifyingDOM = false;
   }
 }
 
-// Check link against protected domains - with fix for multiple warning icons and correct domain identification
-function checkLinkAgainstDomains(link, url, urlDomain, domainsToProtect) {
-  // Skip if this link already has a warning icon
-  if (link.hasAttribute('data-phishguard-warned')) {
-    return false;
-  }
-  
-  for (const protectedDomain of domainsToProtect) {
-    if (!protectedDomain) continue;
-    
-    // Skip if it's an exact match to the protected domain (legitimate link)
-    if (urlDomain.toLowerCase() === protectedDomain.toLowerCase()) {
-      continue;
-    }
-    
-    // Check for domain similarity
-    if (isSimilarDomain(urlDomain, protectedDomain)) {
-      console.log('[Vervain] Found suspicious URL:', url, 'similar to:', protectedDomain);
-      
-      // Determine which is the suspicious domain and which is the legitimate one
-      // In this case, the URL domain is always suspicious (trying to mimic the protected domain)
-      const suspiciousDomain = urlDomain;
-      const legitimateDomain = protectedDomain;
-      
-      // Highlight the suspicious link
-      link.style.backgroundColor = '#FECACA';
-      link.style.color = '#DC2626';
-      link.style.fontWeight = 'bold';
-      link.style.padding = '2px 4px';
-      link.style.border = '1px solid #DC2626';
-      link.style.borderRadius = '3px';
-      link.style.textDecoration = 'line-through';
-      
-      // Mark this link as already warned
-      link.setAttribute('data-phishguard-warned', 'true');
-      
-      // Add warning icon
-      const warningIcon = document.createElement('span');
-      warningIcon.innerHTML = '⚠️';
-              warningIcon.title = 'Vervain: This URL may be impersonating ' + legitimateDomain;
-      link.parentNode.insertBefore(warningIcon, link.nextSibling);
-      
-      // Show warning notification with correct domain identification
-      insertWarning(url, suspiciousDomain, legitimateDomain);
-      
-      // Prevent click
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        alert(`⚠️ Vervain Warning: This link may be impersonating ${legitimateDomain}`);
-        return false;
-      }, true);
-      
-      return true;
-    }
-  }
-  
-  return false;
-}
+function addContactImpersonationIndicator(element, senderName, senderEmail, evidence) {
+  var warningKey = senderEmail.toLowerCase();
+  if (dismissedContactWarnings.has(warningKey)) return;
 
-// Also scan for plain text URLs in email content
-function scanPlainTextUrls(container, domainsToProtect, whitelistedDomains) {
-  try {
-    // Get all text nodes in the container
-    const textNodes = [];
-    const walker = document.createTreeWalker(
-      container,
-      NodeFilter.SHOW_TEXT,
-      null,
-      false
-    );
-    
-    let node;
-    while (node = walker.nextNode()) {
-      textNodes.push(node);
-    }
-    
-    // URL regex pattern
-    const urlPattern = /(https?:\/\/[^\s<>"']+)/gi;
-    
-    textNodes.forEach(textNode => {
-      const text = textNode.nodeValue;
-      let match;
-      
-      while ((match = urlPattern.exec(text)) !== null) {
-        try {
-          const url = match[0];
-          const urlDomain = new URL(url).hostname;
-          
-          // Skip if domain is whitelisted
-          if (isDomainWhitelisted(urlDomain, whitelistedDomains)) {
-            continue;
-          }
-          
-          // Check against protected domains
-          for (const protectedDomain of domainsToProtect) {
-            if (!protectedDomain) continue;
-            
-            if (isSimilarDomain(urlDomain, protectedDomain)) {
-              console.log('[Vervain] Found suspicious plain text URL:', url);
-              
-              // Split the text node and highlight the URL
-              const beforeText = text.substring(0, match.index);
-              const afterText = text.substring(match.index + url.length);
-              
-              const span = document.createElement('span');
-              span.textContent = url;
-              span.style.backgroundColor = '#FECACA';
-              span.style.color = '#DC2626';
-              span.style.fontWeight = 'bold';
-              span.style.padding = '2px 4px';
-              span.style.border = '1px solid #DC2626';
-              span.style.borderRadius = '3px';
-              span.style.textDecoration = 'line-through';
-              
-              // Replace the text node with our new elements
-              const fragment = document.createDocumentFragment();
-              if (beforeText) fragment.appendChild(document.createTextNode(beforeText));
-              fragment.appendChild(span);
-              if (afterText) fragment.appendChild(document.createTextNode(afterText));
-              
-              textNode.parentNode.replaceChild(fragment, textNode);
-              
-              // Show warning notification
-              insertWarning(url, urlDomain, protectedDomain);
-              
-              break;
-            }
-          }
-        } catch (error) {
-          console.error('[Vervain] Error checking plain text URL:', error);
-        }
-      }
-    });
-  } catch (error) {
-          console.error('[Vervain] Error scanning plain text URLs:', error);
-  }
-}
-
-// Update processContainers to also scan plain text URLs
-function processContainers(containers, domainsToProtect, whitelistedDomains) {
-  try {
-    containers.forEach(container => {
-      // Get all links in the email
-      const links = container.querySelectorAll('a[href]');
-      
-      links.forEach(link => {
-        try {
-          const url = link.href;
-          if (!url || url.startsWith('mailto:')) return;
-          
-          // Extract domain from URL
-          const urlDomain = new URL(url).hostname;
-          
-          // Skip if domain is whitelisted
-          if (isDomainWhitelisted(urlDomain, whitelistedDomains)) {
-            return;
-          }
-          
-          checkLinkAgainstDomains(link, url, urlDomain, domainsToProtect);
-        } catch (error) {
-          console.error('[Vervain] Error checking URL:', error);
-        }
-      });
-      
-      // Also scan for plain text URLs
-      scanPlainTextUrls(container, domainsToProtect, whitelistedDomains);
-    });
-  } catch (error) {
-          console.error('[Vervain] Error processing containers:', error);
-  }
-}
-
-// Scan for phishing URLs in email content with better error handling
-function scanEmailContent(primaryDomain, additionalDomains, whitelistedDomains) {
-      console.log('[Vervain] Scanning email content...');
-  
-  // Get all email content containers
-  const emailContainers = document.querySelectorAll('.a3s');
-  if (emailContainers.length === 0) {
-    console.log('[Vervain] No email content containers found');
-    return;
-  }
-  
-  // Combine all domains to protect
-  const domainsToProtect = [primaryDomain, ...additionalDomains].filter(Boolean);
-  
-  // Process each email container
-  emailContainers.forEach(container => {
-    // Scan for links in the email
-    const links = container.querySelectorAll('a[href]');
-    links.forEach(link => {
-      try {
-        const url = link.href;
-        if (!url || url.startsWith('mailto:')) return;
-        
-        let urlDomain;
-        try {
-          urlDomain = new URL(url).hostname;
-        } catch (e) {
-          console.log('[Vervain] Invalid URL:', url);
-          return;
-        }
-        
-        // Skip if domain is whitelisted
-        if (isDomainWhitelisted(urlDomain, whitelistedDomains)) {
-          return;
-        }
-        
-        // Skip common legitimate domains
-        const commonLegitDomains = ['gmail.com', 'google.com', 'microsoft.com', 'apple.com', 'amazon.com'];
-        if (commonLegitDomains.includes(urlDomain)) {
-          console.log('[Vervain] Skipping check for known trusted domain:', urlDomain);
-          return;
-        }
-        
-        // Check link against protected domains
-        checkLinkAgainstDomains(link, url, urlDomain, domainsToProtect);
-      } catch (error) {
-        console.error('[Vervain] Error checking link:', error);
-      }
-    });
-    
-    // Scan for plain text URLs
-    scanPlainTextUrls(container, domainsToProtect, whitelistedDomains);
-    
-    // Scan for embedded domains in text content
-    scanForEmbeddedDomains(container, domainsToProtect, whitelistedDomains);
-  });
-}
-
-// NEW: Scan for embedded domains in text content
-function scanForEmbeddedDomains(container, domainsToProtect, whitelistedDomains) {
-  // Function intentionally disabled to prevent excessive warning symbols
-  return;
-}
-
-// Helper function to escape special characters in a string for use in a RegExp
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Helper function for basic homograph normalization
-function normalizeForHomographs(domain) {
-  // Replace the most common homograph substitutions
-  const homographMap = {
-    '0': 'o',
-    '1': 'l',
-    '3': 'e',
-    '5': 's'
-  };
-  
-  let normalized = domain.toLowerCase();
-  for (const [char, replacement] of Object.entries(homographMap)) {
-    normalized = normalized.replace(new RegExp(char, 'g'), replacement);
-  }
-  
-  return normalized;
-}
-
-// Helper function for more extensive homograph normalization
-function normalizeWithExpandedSet(domain) {
-  // More comprehensive homograph substitutions
-  const expandedHomographMap = {
-    '0': 'o',
-    'o': 'o',
-    '1': 'l',
-    'l': 'l',
-    'i': 'i',
-    '!': 'i',
-    '|': 'l',
-    '3': 'e',
-    'e': 'e',
-    '4': 'a',
-    'a': 'a',
-    '5': 's',
-    's': 's',
-    '6': 'b',
-    'b': 'b',
-    '7': 't',
-    't': 't',
-    '8': 'b',
-    '9': 'g',
-    'g': 'g',
-    '$': 's',
-    '@': 'a',
-    'rn': 'm',
-    'cl': 'd'
-  };
-  
-  let normalized = domain.toLowerCase();
-  for (const [char, replacement] of Object.entries(expandedHomographMap)) {
-    normalized = normalized.replace(new RegExp(char, 'g'), replacement);
-  }
-  
-  return normalized;
-}
-
-// Improved function to check if domains are similar - with better subdomain handling
-function isSimilarDomain(domain1, domain2) {
-  if (!domain1 || !domain2) return false;
-  
-  // Normalize domains
-  domain1 = domain1.toLowerCase();
-  domain2 = domain2.toLowerCase();
-  
-      console.log('[Vervain] Comparing domains:', domain1, domain2);
-  
-  // If domains are identical, they're not suspicious
-  if (domain1 === domain2) return false;
-  
-  // Check for legitimate subdomain relationship
-  // If domain1 is a legitimate subdomain of domain2 (e.g., mail.example.com is a subdomain of example.com)
-  if (domain1.endsWith('.' + domain2)) {
-    console.log('[Vervain] Legitimate subdomain relationship detected:', domain1, 'is a subdomain of', domain2);
-    return false; // Legitimate subdomain, not suspicious
-  }
-  
-  // Check if domain2 is a subdomain of domain1
-  if (domain2.endsWith('.' + domain1)) {
-    console.log('[Vervain] Legitimate subdomain relationship detected:', domain2, 'is a subdomain of', domain1);
-    return false; // Legitimate subdomain, not suspicious
-  }
-
-  // NEW: Check for hyphen-to-dot substitution attacks (works both ways)
-  // Example: blue-securityops.com vs blue.securityops.com
-  // Replace hyphens with dots and vice versa to detect this pattern
-  const domain1WithDotsForHyphens = domain1.replace(/-/g, '.');
-  const domain1WithHyphensForDots = domain1.replace(/\./g, '-');
-  const domain2WithDotsForHyphens = domain2.replace(/-/g, '.');
-  const domain2WithHyphensForDots = domain2.replace(/\./g, '-');
-
-  // Check if domain1 with hyphens replaced by dots matches domain2
-  if (domain1WithDotsForHyphens === domain2 && domain1 !== domain2) {
-    console.log('[Vervain] Hyphen-to-dot substitution detected:', domain1, '→', domain1WithDotsForHyphens, 'matches', domain2);
-    return true;
-  }
-
-  // Check if domain2 with hyphens replaced by dots matches domain1
-  if (domain2WithDotsForHyphens === domain1 && domain1 !== domain2) {
-    console.log('[Vervain] Hyphen-to-dot substitution detected:', domain2, '→', domain2WithDotsForHyphens, 'matches', domain1);
-    return true;
-  }
-
-  // Check if domain1 with dots replaced by hyphens matches domain2
-  if (domain1WithHyphensForDots === domain2 && domain1 !== domain2) {
-    console.log('[Vervain] Dot-to-hyphen substitution detected:', domain1, '→', domain1WithHyphensForDots, 'matches', domain2);
-    return true;
-  }
-
-  // Check if domain2 with dots replaced by hyphens matches domain1
-  if (domain2WithHyphensForDots === domain1 && domain1 !== domain2) {
-    console.log('[Vervain] Dot-to-hyphen substitution detected:', domain2, '→', domain2WithHyphensForDots, 'matches', domain1);
-    return true;
-  }
-
-  // NEW: Check for combo domain tricks where protected domain appears as subdomain of attacker's domain
-  // Example: monarch.verify-account.com trying to impersonate monarch.com
-  const domain1Parts = domain1.split('.');
-  const domain2Parts = domain2.split('.');
-
-  // Get the base domain name (second-level domain) of the protected domain
-  const domain2BaseName = domain2Parts.length > 1 ? domain2Parts[domain2Parts.length - 2] : '';
-  const domain1BaseName = domain1Parts.length > 1 ? domain1Parts[domain1Parts.length - 2] : '';
-
-  // Check if domain1 starts with domain2's base name (e.g., "monarch.something.com" when protecting "monarch.com")
-  // But only if it's more than 2 parts (to avoid false positives on the domain itself)
-  if (domain1Parts.length > 2 && domain1Parts[0] === domain2BaseName) {
-    console.log('[Vervain] Combo domain trick detected:', domain1, 'uses protected domain', domain2BaseName, 'as subdomain');
-    return true;
-  }
-
-  // Check the reverse case
-  if (domain2Parts.length > 2 && domain2Parts[0] === domain1BaseName) {
-    console.log('[Vervain] Combo domain trick detected:', domain2, 'uses protected domain', domain1BaseName, 'as subdomain');
-    return true;
-  }
-
-  // Get base domains (second-level domain name) - using already declared domain1Parts and domain2Parts from above
-  const domain1Base = domain1Parts.length > 1 ? domain1Parts[domain1Parts.length - 2] : '';
-  const domain2Base = domain2Parts.length > 1 ? domain2Parts[domain2Parts.length - 2] : '';
-  
-  // If base domains are different and don't share significant characters, they're not similar
-  if (domain1Base && domain2Base) {
-    // Check for homograph attacks first (need normalized versions for other checks)
-    const normalizedDomain1 = normalizeForHomographs(domain1Base);
-    const normalizedDomain2 = normalizeForHomographs(domain2Base);
-
-    // NEW: Check for hyphenated domain impersonation with homograph support
-    // Example: email-m0narch.com mimicking monarch.com (catches m0narch → monarch)
-    // Split on hyphens and check each part
-    const domain1Parts = domain1Base.split('-');
-    const domain2Parts = domain2Base.split('-');
-
-    // Check if any hyphenated part matches the protected domain (with homograph normalization)
-    // Only flag if the FULL domain base contains hyphens (to avoid false positives)
-    if (domain1Parts.length > 1) {
-      for (const part of domain1Parts) {
-        const normalizedPart = normalizeForHomographs(part);
-        if (normalizedPart === normalizedDomain2 && domain1Base !== domain2Base) {
-          console.log('[Vervain] Hyphenated domain impersonation detected:', domain1Base, 'contains hyphenated part', part, '→', normalizedPart, 'matching', domain2Base);
-          return true;
-        }
-      }
-    }
-
-    if (domain2Parts.length > 1) {
-      for (const part of domain2Parts) {
-        const normalizedPart = normalizeForHomographs(part);
-        if (normalizedPart === normalizedDomain1 && domain2Base !== domain1Base) {
-          console.log('[Vervain] Hyphenated domain impersonation detected:', domain2Base, 'contains hyphenated part', part, '→', normalizedPart, 'matching', domain1Base);
-          return true;
-        }
-      }
-    }
-
-    // Check for homograph attacks (exact match after normalization)
-    // Exact match after normalization is definitely suspicious
-    if (normalizedDomain1 === normalizedDomain2 && domain1Base !== domain2Base) {
-      console.log('[Vervain] Homograph attack detected:', domain1Base, '→', normalizedDomain1, 'matches', domain2Base, '→', normalizedDomain2);
-      return true;
-    }
-    
-    // More thorough homograph check with expanded character set
-    const expandedNormDomain1 = normalizeWithExpandedSet(domain1Base);
-    const expandedNormDomain2 = normalizeWithExpandedSet(domain2Base);
-    
-    if (expandedNormDomain1 === expandedNormDomain2 && domain1Base !== domain2Base) {
-              console.log('[Vervain] Advanced homograph attack detected:', domain1Base, '→', expandedNormDomain1, 'matches', domain2Base, '→', expandedNormDomain2);
-      return true;
-    }
-    
-    // Check for close visual similarity
-    const similarity = levenshteinDistance(domain1Base, domain2Base) / Math.max(domain1Base.length, domain2Base.length);
-    
-    // If domains are very similar (less than 20% difference)
-    if (similarity <= 0.2) {
-      console.log('[Vervain] Domains are visually similar:', domain1Base, domain2Base, 'similarity score:', similarity);
-      return true;
-    }
-  }
-  
-  // By default, domains are not considered similar
-  return false;
-}
-
-// Insert warning for spoofed contact
-function insertSpoofedContactWarning(senderEmail, senderName, trustedEmail) {
-  // Set flag to prevent mutation observer from triggering
   isModifyingDOM = true;
-  
   try {
-    // Create a stable identifier for this warning (without timestamp)
-    const warningId = `spoofed-${senderEmail.toLowerCase()}`;
-    
-    // Check if this specific warning has been dismissed since last scan
-    if (window.phishguardDismissedSpoofedWarnings && window.phishguardDismissedSpoofedWarnings.has(warningId)) {
-      console.log('[Vervain] Contact spoofing warning already dismissed since last scan:', warningId);
-      return;
+    var emailContainer = element;
+    var depth = 0;
+    while (emailContainer && !emailContainer.classList.contains('zA') && !emailContainer.classList.contains('zF') && depth < 10) {
+      emailContainer = emailContainer.parentElement;
+      depth++;
     }
-    
-    // Only check if we already have a warning visible
-    if (document.querySelector('.phishguard-warning')) {
-      return;
-    }
-    
-    console.log('[Vervain] Inserting spoofed contact warning for:', senderName, senderEmail, trustedEmail);
-  
-  // Create warning element
-  const warningDiv = document.createElement('div');
-  warningDiv.className = 'phishguard-warning';
-  warningDiv.style.position = 'fixed';
-  warningDiv.style.top = '20px';
-  warningDiv.style.right = '20px';
-  warningDiv.style.zIndex = '9999';
-  warningDiv.style.backgroundColor = '#ffffff';
-  warningDiv.style.border = '2px solid #DC2626';
-  warningDiv.style.borderRadius = '8px';
-  warningDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
-  warningDiv.style.padding = '16px';
-  warningDiv.style.width = '350px';
-  warningDiv.style.animation = 'fadeIn 0.3s';
-  
-  // Add styles
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .phishguard-button {
-      padding: 8px 12px;
-      border-radius: 4px;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
-      outline: none;
-    }
-    .phishguard-secondary {
-      background-color: #f1f5f9;
-      color: #334155;
-    }
-  `;
-  document.head.appendChild(style);
-  
-  // Simplified warning content - focused only on trusted contact spoofing
-  warningDiv.innerHTML = `
-    <div style="display: flex; align-items: center; margin-bottom: 12px;">
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
-        <path d="M12 9v4"></path>
-        <path d="M12 17h.01"></path>
-      </svg>
-      <div style="font-weight: bold; font-size: 16px; margin-left: 8px; color: #DC2626;">⚠️ CONTACT IMPERSONATION DETECTED ⚠️</div>
-      <div style="margin-left: auto; cursor: pointer;" id="phishguard-close">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6 6 18"></path>
-          <path d="m6 6 12 12"></path>
-        </svg>
-      </div>
-    </div>
-    <div style="margin-bottom: 12px; font-size: 14px; color: #334155;">
-      <strong>CAUTION:</strong> Someone is using a trusted contact's name but with a different email address:
-    </div>
-    <div style="background-color: #FEF2F2; padding: 12px; border-radius: 4px; margin-bottom: 12px;">
-      <div style="font-size: 14px; margin-bottom: 4px;"><strong>From:</strong> ${senderName} &lt;${senderEmail}&gt;</div>
-      <div style="font-size: 14px; margin-bottom: 4px;"><strong>Expected Email:</strong> <span style="color: #047857;">${trustedEmail}</span></div>
-    </div>
-    <div style="display: flex; gap-2; justify-content: center; margin-top: 16px;">
-      <button id="phishguard-dismiss-spoofed" class="phishguard-button phishguard-secondary">Dismiss</button>
-      <button id="phishguard-whitelist-spoofed" class="phishguard-button phishguard-primary">Mark as Safe</button>
-    </div>
-  `;
-  
-  document.body.appendChild(warningDiv);
-  
-  // Handle close button (X)
-  document.getElementById('phishguard-close').addEventListener('click', () => {
-          console.log('[Vervain] Spoofed contact warning closed by user');
-    warningDiv.remove();
-    chrome.runtime.sendMessage({ type: "RESET_BADGE" });
-  });
-  
-  // Handle dismiss button - temporarily hide until next scan
-  document.getElementById('phishguard-dismiss-spoofed').addEventListener('click', () => {
-          console.log('[Vervain] Spoofed contact warning dismissed by user (temporary until next scan)');
-    
-    // Store this dismissal in memory (clears on next scan)
-    if (!window.phishguardDismissedSpoofedWarnings) {
-      window.phishguardDismissedSpoofedWarnings = new Set();
-    }
-    window.phishguardDismissedSpoofedWarnings.add(warningId);
-    
-    warningDiv.remove();
-    chrome.runtime.sendMessage({ type: "RESET_BADGE" });
-  });
-  
-  // Handle whitelist button - add to trusted contacts
-  document.getElementById('phishguard-whitelist-spoofed').addEventListener('click', () => {
-          console.log('[Vervain] Contact marked as safe by user');
-    
-    // Add the sender email to trusted contacts
-    chrome.storage.local.get(["trustedContacts"], (result) => {
-      const trustedContacts = result.trustedContacts || [];
-      const newContact = {
-        name: senderName,
-        email: senderEmail
-      };
-      
-      // Check if contact already exists
-      const exists = trustedContacts.some(contact => 
-        contact.email.toLowerCase() === senderEmail.toLowerCase()
-      );
-      
-      if (!exists) {
-        trustedContacts.push(newContact);
-        chrome.storage.local.set({ trustedContacts });
-        console.log('[Vervain] Added to trusted contacts:', newContact);
-      }
-      
-      warningDiv.remove();
-      chrome.runtime.sendMessage({ type: "RESET_BADGE" });
-      
-      // Refresh the page to clear all warnings
-      console.log('[Vervain] Refreshing page after marking contact as safe');
-      window.location.reload();
-    });
-  });
-  
-  // Notify background script
-  chrome.runtime.sendMessage({ type: "PHISHING_DETECTED" });
-  
+    if (!emailContainer) return;
+
+    var existing = emailContainer.querySelector('.phishguard-contact-indicator');
+    if (existing) existing.remove();
+
+    var indicator = document.createElement('div');
+    indicator.className = 'phishguard-contact-indicator';
+    indicator.style.cssText =
+      'background:#fff;color:#334155;padding:16px;margin:8px 0;' +
+      'border:2px solid #DC2626;border-radius:8px;' +
+      'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:14px;font-weight:500;' +
+      'box-shadow:0 4px 12px rgba(0,0,0,0.15);position:relative;z-index:1000;';
+
+    var titleDiv = document.createElement('div');
+    titleDiv.style.cssText = 'font-weight:600;margin-bottom:4px;';
+    titleDiv.textContent = 'Potential Contact Impersonation';
+
+    var detailDiv = document.createElement('div');
+    detailDiv.style.cssText = 'font-size:13px;opacity:0.9;line-height:1.4;';
+    var nameB = document.createElement('strong');
+    nameB.textContent = senderName;
+    detailDiv.appendChild(nameB);
+    detailDiv.appendChild(document.createTextNode(' (' + senderEmail + ') \u2014 ' + evidence));
+
+    indicator.appendChild(titleDiv);
+    indicator.appendChild(detailDiv);
+
+    emailContainer.insertBefore(indicator, emailContainer.firstChild);
+    chrome.runtime.sendMessage({ type: 'PHISHING_DETECTED' });
   } catch (error) {
-    console.error('[Vervain] Error inserting spoofed contact warning:', error);
+    console.error('[Vervain] Error adding contact indicator:', error);
   } finally {
-    // Reset flag after DOM modification
     isModifyingDOM = false;
   }
 }
 
-// Check if a sender is spoofing a trusted contact
-function checkTrustedContactSpoofing(senderName, senderEmail, trustedContacts) {
-  try {
-    console.log('[Vervain] Checking trusted contact spoofing for:', senderName, senderEmail);
-    
-    if (!trustedContacts || trustedContacts.length === 0) {
-      return null;
-    }
-    
-    // Step 1: Hash-based exact contact lookup (O(1) performance)
-    const trustedContactSet = new Set();
-    const trustedDomains = new Set();
-    
-    // Build hash sets for fast lookup
-    trustedContacts.forEach(contact => {
-      const key = `${contact.email.toLowerCase()}|${contact.name.toLowerCase()}`;
-      trustedContactSet.add(key);
-      trustedDomains.add(extractDomain(contact.email).toLowerCase());
-    });
-    
-    // Check for exact match first (fastest path)
-    const senderKey = `${senderEmail.toLowerCase()}|${senderName.toLowerCase()}`;
-    if (trustedContactSet.has(senderKey)) {
-      console.log('[Vervain] Exact trusted contact match found:', senderEmail);
-      return null; // No spoofing - exact match
-    }
-    
-    // Step 2: Check for similar names in trusted domains (only if no exact match)
-    const senderDomain = extractDomain(senderEmail).toLowerCase();
-    
-    // If sender domain is trusted, check for name similarity
-    if (trustedDomains.has(senderDomain)) {
-      console.log('[Vervain] Sender domain is trusted, checking for name similarity');
-      
-      // Find contacts with similar names in this domain
-      const similarContacts = trustedContacts.filter(contact => {
-        const contactDomain = extractDomain(contact.email).toLowerCase();
-        if (contactDomain !== senderDomain) return false;
-        
-        // Check if names are similar (exact match or contains)
-        const contactName = contact.name.toLowerCase();
-        const senderNameLower = senderName.toLowerCase();
-        
-        // Exact name match
-        if (contactName === senderNameLower) return true;
-        
-        // Partial name match (first or last name)
-        const contactNameParts = contactName.split(' ');
-        const senderNameParts = senderNameLower.split(' ');
-        
-        // Check if any name parts match
-        return contactNameParts.some(part => 
-          senderNameParts.some(senderPart => 
-            part === senderPart || part.includes(senderPart) || senderPart.includes(part)
-          )
-        );
-      });
-      
-      if (similarContacts.length > 0) {
-        console.log('[Vervain] Similar name found in trusted domain:', similarContacts[0].email);
-        return similarContacts[0].email; // Potential spoofing
-      }
-    }
-    
-    // Step 3: Check for exact name matches across all domains (legacy behavior)
-    const exactNameMatches = trustedContacts.filter(contact => 
-      contact.name.toLowerCase() === senderName.toLowerCase()
-    );
-    
-    if (exactNameMatches.length > 0) {
-      // Check if sender email is different from trusted contact email
-      const trustedEmail = exactNameMatches[0].email;
-      if (trustedEmail.toLowerCase() !== senderEmail.toLowerCase()) {
-        console.log('[Vervain] Spoofed contact detected - exact name match:', senderName, 'using', senderEmail, 'instead of', trustedEmail);
-        console.log('[Vervain] Returning trusted email for warning:', trustedEmail);
-        return trustedEmail;
-      }
-    }
-    
-    return null; // No spoofing detected
-    
-  } catch (error) {
-          console.error('[Vervain] Error checking trusted contact spoofing:', error);
-    return null;
-  }
-}
+// --- Email data extraction ---
 
-// Scan sender domains for phishing attempts
-function scanSenderDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains, trustedContacts) {
-  // Try multiple selectors for better compatibility
-  const senderElements = document.querySelectorAll('.gD[email], .go[email], .g2[email]');
-  console.log('[Vervain] Found sender elements:', senderElements.length);
-  
-  senderElements.forEach(element => {
-    try {
-      const senderEmail = element.getAttribute('email');
-      if (!senderEmail) return;
-      
-      // Get sender name (display name)
-      const senderName = element.innerText || '';
-      
-      // First check for trusted contact spoofing
-      if (trustedContacts && trustedContacts.length > 0) {
-        const trustedEmail = checkTrustedContactSpoofing(senderName, senderEmail, trustedContacts);
-        if (trustedEmail) {
-          // Show both the popup warning AND the horizontal banner above the email
-          insertSpoofedContactWarning(senderEmail, senderName, trustedEmail);
-          addContactImpersonationIndicator(element, senderName, senderEmail, trustedEmail);
-          return;
-        }
-      }
-      
-      const senderDomain = extractDomain(senderEmail);
-      if (!senderDomain) return;
-      
-              console.log('[Vervain] Checking sender domain:', senderDomain);
-      
-      // Skip if domain is whitelisted
-      if (isDomainWhitelisted(senderDomain, whitelistedDomains)) {
-        console.log('[Vervain] Domain is whitelisted:', senderDomain);
-        return;
-      }
-      
-      // Check if domain is blocked
-      if (isDomainBlocked(senderDomain, blockedDomains)) {
-        console.log('[Vervain] Domain is blocked:', senderDomain);
-        insertWarning(senderEmail, senderDomain, 'Blocked Domain');
-        return;
-      }
-      
-      // Skip checks for common email providers
-      const commonProviders = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com'];
-      if (commonProviders.includes(senderDomain) && (!primaryDomain || !additionalDomains || additionalDomains.length === 0)) {
-        console.log('[Vervain] Skipping check for common email provider:', senderDomain);
-        return;
-      }
-      
-      // Check against primary domain
-      if (primaryDomain && isSimilarDomain(senderDomain, primaryDomain)) {
-        console.log('[Vervain] Domain is similar to primary domain:', senderDomain);
-        // The sender domain is the suspicious one
-        insertWarning(senderEmail, senderDomain, primaryDomain);
-        return;
-      }
-      
-      // Check against additional domains
-      if (additionalDomains && additionalDomains.length > 0) {
-        for (const additionalDomain of additionalDomains) {
-          if (!additionalDomain) continue;
-          
-          
-          if (isSimilarDomain(senderDomain, additionalDomain)) {
-            console.log('[Vervain] Domain is similar to additional domain:', senderDomain, additionalDomain);
-            // FIXED: The sender domain is always the suspicious one
-            insertWarning(senderEmail, senderDomain, additionalDomain);
-            return;
-          }
-        }
-      }
-      
-      // Check against known variations
-      if (variations && variations.length > 0) {
-        if (isDomainSuspicious(senderDomain, primaryDomain, variations)) {
-          console.log('[Vervain] Domain matches a known variation:', senderDomain);
-          insertWarning(senderEmail, senderDomain, primaryDomain);
-          return;
-        }
-      }
-    } catch (error) {
-      console.error('[Vervain] Error checking sender domain:', error);
-    }
-  });
-}
-
-// Add the levenshteinDistance function that was missing
-function levenshteinDistance(str1, str2) {
-  const m = str1.length;
-  const n = str2.length;
-  
-  // Create a matrix of size (m+1) x (n+1)
-  const dp = Array(m + 1).fill().map(() => Array(n + 1).fill(0));
-  
-  // Initialize the matrix
-  for (let i = 0; i <= m; i++) {
-    dp[i][0] = i;
-  }
-  
-  for (let j = 0; j <= n; j++) {
-    dp[0][j] = j;
-  }
-  
-  // Fill the matrix
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (str1[i - 1] === str2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1];
-      } else {
-        dp[i][j] = 1 + Math.min(
-          dp[i - 1][j],     // deletion
-          dp[i][j - 1],     // insertion
-          dp[i - 1][j - 1]  // substitution
-        );
-      }
-    }
-  }
-  
-  return dp[m][n];
-}
-
-// Scan for phishing with local data to avoid extension context issues
-function scanForPhishing() {
-  // Prevent recursive scanning
-  if (isCurrentlyScanning) {
-    console.log('[Vervain] Scan already in progress, skipping...');
-    return;
-  }
-  
-  isCurrentlyScanning = true;
-  
-  try {
-    console.log('[Vervain] Running scan...');
-    
-    // Try to use cached settings from localStorage if available
-    const getCachedSettings = () => {
-      try {
-        const cachedSettings = localStorage.getItem('phishguard-settings');
-        if (cachedSettings) {
-          return JSON.parse(cachedSettings);
-        }
-      } catch (error) {
-        console.error('[Vervain] Error getting cached settings:', error);
-      }
-      return null;
-    };
-  
-    // Save settings to localStorage for future use
-    const cacheSettings = (settings) => {
-      try {
-        localStorage.setItem('phishguard-settings', JSON.stringify(settings));
-        console.log('[Vervain] Settings cached to localStorage');
-      } catch (error) {
-        console.error('[Vervain] Error caching settings:', error);
-      }
-    };
-  
-    // Helper function to safely check if extension context is valid
-    function isExtensionContextValid() {
-      try {
-        return chrome && chrome.runtime && chrome.runtime.id;
-      } catch (error) {
-        return false;
-      }
-    }
-  
-    // Helper function to safely call Chrome storage APIs
-    function safeChromeStorageCall(operation, fallback = null) {
-      if (!isExtensionContextValid()) {
-        console.warn('[Vervain] Extension context not available, using fallback');
-        return fallback;
-      }
-      
-      try {
-        return operation();
-      } catch (error) {
-        console.error('[Vervain] Chrome API error:', error);
-        return fallback;
-      }
-    }
-  
-    // Function to process settings and run scans
-    const processSettings = (settings) => {
-      try {
-        if (!settings) {
-          console.log('[Vervain] No settings available');
-          return;
-        }
-
-        // Inject AI button early — it should appear on any open email
-        // regardless of domain/contact setup or detection toggles
-        const aiEnabled = settings.aiEnabled || false;
-        maybeInjectAIButton({ aiEnabled });
-
-        // Only require setup completion for domain scanning, not trusted contact scanning
-        if (!settings.setupComplete && (!settings.trustedContacts || settings.trustedContacts.length === 0)) {
-          console.log('[Vervain] Setup not complete and no trusted contacts configured');
-          return;
-        }
-
-        // Check if both detection types are disabled
-        const domainDetectionEnabled = settings.domainDetectionEnabled !== false;
-        const contactDetectionEnabled = settings.contactDetectionEnabled !== false;
-
-        if (!domainDetectionEnabled && !contactDetectionEnabled) {
-          console.log('[Vervain] All detection disabled');
-          return;
-        }
-
-        // Only initialize dismissed warnings sets if they don't exist (don't clear on every scan)
-        if (!window.phishguardDismissedWarnings) {
-          window.phishguardDismissedWarnings = new Set();
-        }
-        if (!window.phishguardDismissedSpoofedWarnings) {
-          window.phishguardDismissedSpoofedWarnings = new Set();
-        }
-
-        const primaryDomain = settings.primaryDomain || '';
-        const variations = settings.variations || [];
-        const whitelistedDomains = settings.whitelistedDomains || [];
-        const blockedDomains = settings.blockedDomains || [];
-        const additionalDomains = settings.additionalDomains || [];
-        const trustedContacts = settings.trustedContacts || [];
-        const autoAddDomains = settings.autoAddDomains || false; // New configuration option
-
-        console.log('[Vervain] Processing with settings:', {
-          primaryDomain,
-          variationsCount: variations.length,
-          additionalDomainsCount: additionalDomains.length,
-          whitelistedCount: whitelistedDomains.length,
-          blockedCount: blockedDomains.length,
-          trustedContactsCount: trustedContacts.length,
-          autoAddDomains: autoAddDomains
-        });
-
-        // Don't scan if no valid domains or trusted contacts are configured
-        if ((!primaryDomain || primaryDomain === '') &&
-            (!additionalDomains || additionalDomains.length === 0) &&
-            (!trustedContacts || trustedContacts.length === 0)) {
-          console.log('[Vervain] No valid domains or trusted contacts configured to protect');
-          return;
-        }
-
-        // Run trusted contacts check if enabled and we have contacts configured
-        if (contactDetectionEnabled && trustedContacts && trustedContacts.length > 0) {
-          console.log('[Vervain] Scanning for trusted contact spoofing...');
-          scanTrustedContacts(trustedContacts, autoAddDomains);
-        }
-
-        // Run domain monitoring if enabled and domains are configured
-        if (domainDetectionEnabled && ((primaryDomain && primaryDomain !== '') || (additionalDomains && additionalDomains.length > 0))) {
-          console.log('[Vervain] Scanning for domain spoofing...');
-          scanDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains);
-        }
-
-      } catch (error) {
-        console.error('[Vervain] Error processing settings:', error);
-      }
-    };
-    
-    // First try to use cached settings
-    const cachedSettings = getCachedSettings();
-    
-    // If extension context is invalid, use cached settings if available
-    if (!isExtensionContextValid()) {
-      console.log('[Vervain] Extension context not available, using cached settings');
-      if (cachedSettings) {
-        processSettings(cachedSettings);
-      } else {
-        console.log('[Vervain] No cached settings available');
-      }
-      return;
-    }
-    
-    // If we have a valid extension context, try to get fresh settings
-    try {
-      console.log('[Vervain] Attempting to get settings from extension...');
-      
-      // Use safe wrapper for Chrome API calls
-      safeChromeStorageCall(() => {
-        chrome.storage.local.get([
-          "setupComplete",
-          "detectionEnabled", // Legacy - for migration
-          "domainDetectionEnabled",
-          "contactDetectionEnabled",
-          "primaryDomain",
-          "variations",
-          "whitelistedDomains",
-          "blockedDomains",
-          "additionalDomains",
-          "trustedContacts",
-          "autoAddDomains",
-          "aiEnabled"
-        ], (settings) => {
-          // Check for runtime errors
-          if (chrome.runtime.lastError) {
-            console.error('[Vervain] Runtime error getting settings:', chrome.runtime.lastError);
-            
-            // Use cached settings as fallback
-            if (cachedSettings) {
-              console.log('[Vervain] Using cached settings after runtime error');
-              processSettings(cachedSettings);
-            }
-            return;
-          }
-          
-          // Cache the settings we just received
-          cacheSettings(settings);
-          
-          // Process the settings
-          processSettings(settings);
-        });
-      });
-    } catch (error) {
-      console.error('[Vervain] Error getting settings:', error);
-      
-      // If we have cached settings, use them as fallback
-      if (cachedSettings) {
-        console.log('[Vervain] Using cached settings after error');
-        processSettings(cachedSettings);
-      }
-    }
-  } finally {
-    isCurrentlyScanning = false;
-  }
-}
-
-// Function dedicated to trusted contact spoofing detection
-function scanTrustedContacts(trustedContacts, autoAddDomains) {
-  console.log('[Vervain] Scanning for trusted contact spoofing');
-  
-  // Try multiple selectors for better compatibility
-  const senderElements = document.querySelectorAll('.gD[email], .go[email], .g2[email]');
-  console.log('[Vervain] Found sender elements:', senderElements.length);
-  
-  senderElements.forEach(element => {
-    try {
-      const senderEmail = element.getAttribute('email');
-      if (!senderEmail) return;
-      
-      // Get sender name (display name)
-      const senderName = element.innerText || '';
-      
-      // Only check for trusted contact spoofing
-      const trustedEmail = checkTrustedContactSpoofing(senderName, senderEmail, trustedContacts);
-      if (trustedEmail) {
-        // Show both the popup warning AND the horizontal banner above the email
-        insertSpoofedContactWarning(senderEmail, senderName, trustedEmail);
-        addContactImpersonationIndicator(element, senderName, senderEmail, trustedEmail);
-
-        // If autoAddDomains is true, add the sender's domain to the whitelist
-        if (autoAddDomains) {
-          const senderDomain = extractDomain(senderEmail);
-          if (senderDomain && !isDomainWhitelisted(senderDomain, trustedContacts.map(c => c.email))) {
-            console.log('[Vervain] Auto-adding trusted contact\'s domain to whitelist:', senderDomain);
-            
-            safeChromeStorageCall(() => {
-              chrome.storage.local.get(["whitelistedDomains"], (result) => {
-                if (chrome.runtime.lastError) {
-                  console.error('[Vervain] Error getting whitelisted domains:', chrome.runtime.lastError);
-                  return;
-                }
-                
-                const whitelistedDomains = result.whitelistedDomains || [];
-                if (!whitelistedDomains.includes(senderDomain)) {
-                  whitelistedDomains.push(senderDomain);
-                  
-                  safeChromeStorageCall(() => {
-                    chrome.storage.local.set({ whitelistedDomains }, () => {
-                      if (chrome.runtime.lastError) {
-                        console.error('[Vervain] Error setting whitelisted domains:', chrome.runtime.lastError);
-                      } else {
-                        console.log('[Vervain] Added to whitelist:', senderDomain);
-                      }
-                    });
-                  });
-                }
-              });
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[Vervain] Error checking trusted contacts:', error);
-    }
-  });
-}
-
-// Function dedicated to domain monitoring
-function scanDomains(primaryDomain, variations, additionalDomains, whitelistedDomains, blockedDomains) {
-  console.log('[Vervain] Scanning for domain spoofing');
-  
-  // Don't scan if no domains to protect
-  const domainsToProtect = [primaryDomain, ...additionalDomains].filter(Boolean);
-  if (domainsToProtect.length === 0) {
-    console.log('[Vervain] No domains to protect');
-    return;
-  }
-  
-  console.log('[Vervain] Domains to protect:', domainsToProtect);
-  
-  // Scan for suspicious sender domains
-  // Try multiple selectors for better compatibility
-  const senderElements = document.querySelectorAll('.gD[email], .go[email], .g2[email]');
-  
-  senderElements.forEach(element => {
-    try {
-      const senderEmail = element.getAttribute('email');
-      if (!senderEmail) return;
-      
-      const senderDomain = extractDomain(senderEmail);
-      if (!senderDomain) return;
-      
-      // Skip if sender domain is already a protected domain (legitimate sender)
-      if (domainsToProtect.includes(senderDomain)) {
-        return;
-      }
-
-      // NEW: Skip if sender domain is a legitimate subdomain of a protected domain
-      const isLegitimateSubdomain = domainsToProtect.some(protectedDomain => {
-        return senderDomain.endsWith('.' + protectedDomain);
-      });
-      if (isLegitimateSubdomain) {
-        console.log('[Vervain] Skipping legitimate subdomain:', senderDomain);
-        return;
-      }
-
-      // Skip if domain is whitelisted
-      if (isDomainWhitelisted(senderDomain, whitelistedDomains)) {
-        console.log('[Vervain] Domain is whitelisted:', senderDomain);
-        return;
-      }
-      
-      // Check if domain is blocked
-      if (isDomainBlocked(senderDomain, blockedDomains)) {
-        console.log('[Vervain] Domain is blocked:', senderDomain);
-        insertWarning(senderEmail, senderDomain, 'Blocked Domain');
-        return;
-      }
-      
-      // Check against each protected domain
-      for (const protectedDomain of domainsToProtect) {
-        // Skip if protected domain is invalid
-        if (!protectedDomain) continue;
-        
-        // Check for domain similarity - clearly mark which is which
-        if (isSimilarDomain(senderDomain, protectedDomain)) {
-          console.log('[Vervain] Found similar domain:', senderDomain, 'similar to protected domain:', protectedDomain);
-          insertWarning(senderEmail, senderDomain, protectedDomain);
-          return;
-        }
-      }
-      
-      // Check against known variations
-      if (variations && variations.length > 0 && primaryDomain) {
-        if (isDomainSuspicious(senderDomain, primaryDomain, variations)) {
-          console.log('[Vervain] Domain matches a known variation:', senderDomain);
-          insertWarning(senderEmail, senderDomain, primaryDomain);
-        }
-      }
-    } catch (error) {
-      console.error('[Vervain] Error checking sender domain:', error);
-    }
-  });
-  
-  // Scan email content for suspicious links
-  const emailContainers = document.querySelectorAll('.a3s');
-  emailContainers.forEach(container => {
-    // Skip if this container is already scanned
-    if (container.hasAttribute('data-phishguard-scanned')) {
-      return;
-    }
-    
-    // Mark as scanned to avoid duplicate checks
-    container.setAttribute('data-phishguard-scanned', 'true');
-    
-    // Only scan actual hyperlinks, not embedded text
-    const links = container.querySelectorAll('a[href]');
-    let suspiciousLinksFound = 0; // Track how many suspicious links we find
-    
-    links.forEach(link => {
-      try {
-        // Skip if already warned
-        if (link.hasAttribute('data-phishguard-warned')) {
-          return;
-        }
-        
-        const url = link.href;
-        if (!url || url.startsWith('mailto:')) return;
-        
-        let urlDomain;
-        try {
-          urlDomain = new URL(url).hostname;
-        } catch (e) {
-          console.log('[Vervain] Invalid URL:', url);
-          return;
-        }
-        
-        // Skip if domain is whitelisted
-        if (isDomainWhitelisted(urlDomain, whitelistedDomains)) {
-          return;
-        }
-
-        // Skip if URL domain is already a protected domain (legitimate link)
-        if (domainsToProtect.includes(urlDomain)) {
-          return;
-        }
-
-        // NEW: Skip if URL domain is a legitimate subdomain of a protected domain
-        const isLegitimateSubdomain = domainsToProtect.some(protectedDomain => {
-          return urlDomain.endsWith('.' + protectedDomain);
-        });
-        if (isLegitimateSubdomain) {
-          console.log('[Vervain] Skipping legitimate subdomain link:', urlDomain);
-          return;
-        }
-
-        // Check link against protected domains
-        for (const protectedDomain of domainsToProtect) {
-          if (!protectedDomain) continue;
-          
-          if (isSimilarDomain(urlDomain, protectedDomain)) {
-            console.log('[Vervain] Found suspicious URL:', url, 'similar to:', protectedDomain);
-            
-            // Mark this link as suspicious
-            link.style.backgroundColor = '#FECACA';
-            link.style.color = '#DC2626';
-            link.style.fontWeight = 'bold';
-            link.style.padding = '2px 4px';
-            link.style.border = '1px solid #DC2626';
-            link.style.borderRadius = '3px';
-            link.style.textDecoration = 'line-through';
-            
-            // Mark this link as already warned
-            link.setAttribute('data-phishguard-warned', 'true');
-            
-            // Add warning icon but only one (remove existing if present)
-            const existingWarning = link.nextSibling;
-            if (existingWarning && existingWarning.nodeType === Node.ELEMENT_NODE && existingWarning.classList.contains('phishguard-warning-icon')) {
-              existingWarning.remove();
-            }
-            
-            const warningIcon = document.createElement('span');
-            warningIcon.innerHTML = '⚠️';
-            warningIcon.className = 'phishguard-warning-icon';
-            warningIcon.title = 'Vervain: This URL may be impersonating ' + protectedDomain;
-            link.parentNode.insertBefore(warningIcon, link.nextSibling);
-            
-            // Only show warning notification for the first few suspicious links
-            if (suspiciousLinksFound <= 3) { // Limit to 3 alerts max
-              insertWarning(url, urlDomain, protectedDomain);
-            }
-            
-            suspiciousLinksFound++;
-            
-            // Prevent click
-            link.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              alert(`⚠️ Vervain Warning: This link may be impersonating ${protectedDomain}`);
-              return false;
-            }, true);
-            
-            break; // Stop checking this link against other protected domains
-          }
-        }
-      } catch (error) {
-        console.error('[Vervain] Error checking link:', error);
-      }
-    });
-    
-    // If we found suspicious links, add a warning header to the email
-    if (suspiciousLinksFound > 0) {
-      // Check if we already added a warning header
-      if (!container.querySelector('.phishguard-email-warning')) {
-        const warningHeader = document.createElement('div');
-        warningHeader.className = 'phishguard-email-warning';
-        warningHeader.style.backgroundColor = '#FEF2F2';
-        warningHeader.style.color = '#DC2626';
-        warningHeader.style.padding = '8px 12px';
-        warningHeader.style.marginBottom = '15px';
-        warningHeader.style.borderRadius = '4px';
-        warningHeader.style.border = '1px solid #DC2626';
-        warningHeader.style.fontWeight = 'bold';
-        warningHeader.style.fontSize = '14px';
-        
-                  warningHeader.innerHTML = `⚠️ Vervain has detected ${suspiciousLinksFound} suspicious link${suspiciousLinksFound > 1 ? 's' : ''} in this email that may be attempting to impersonate legitimate domains.`;
-        
-        // Insert at the top of the container
-        if (container.firstChild) {
-          container.insertBefore(warningHeader, container.firstChild);
-        } else {
-          container.appendChild(warningHeader);
-        }
-      }
-    }
-  });
-}
-
-// --- AI Phishing Analysis ---
-
-// Extract email data from the currently open email view
 function extractEmailData() {
-  // Sender info - from the expanded email header
-  const senderEl = document.querySelector('.gD[email]');
-  const senderEmail = senderEl ? senderEl.getAttribute('email') : '';
-  const senderName = senderEl ? (senderEl.getAttribute('name') || senderEl.innerText || '') : '';
+  var senderEl = document.querySelector('.gD[email]');
+  var senderEmail = senderEl ? senderEl.getAttribute('email') : '';
+  var senderName = senderEl ? (senderEl.getAttribute('name') || senderEl.innerText || '') : '';
 
-  // Subject line
-  const subjectEl = document.querySelector('.hP');
-  const subject = subjectEl ? subjectEl.innerText : '';
+  var subjectEl = document.querySelector('.hP');
+  var subject = subjectEl ? subjectEl.innerText : '';
 
-  // Body text - strip HTML, cap at 80k chars
-  // Clone the body element and remove Vervain-injected warnings so they
-  // don't contaminate the AI analysis (domain spoofing banners, warning
-  // icons, contact impersonation indicators, and AI result panels).
-  const bodyEl = document.querySelector('.a3s.aiL');
-  let body = '';
-  let truncated = false;
-  let originalLength = 0;
-  let cleanBodyEl = null;
+  var bodyEl = document.querySelector('.a3s.aiL');
+  var body = '';
+  var truncated = false;
+  var originalLength = 0;
+  var cleanBodyEl = null;
   if (bodyEl) {
     cleanBodyEl = bodyEl.cloneNode(true);
     cleanBodyEl.querySelectorAll(
-      '.phishguard-email-warning, .phishguard-contact-indicator, .phishguard-warning-icon, .vervain-ai-results, .vervain-ai-btn'
-    ).forEach(el => el.remove());
+      '.phishguard-email-warning, .phishguard-contact-indicator, .phishguard-warning-icon, ' +
+      '.vervain-ai-results, .vervain-ai-btn, .vervain-link-badge, .vervain-link-warn, .phishguard-warning'
+    ).forEach(function(el) { el.remove(); });
+    // Also strip any Vervain-injected inline styling artifacts from links
+    cleanBodyEl.querySelectorAll('[data-vervain-link-scanned]').forEach(function(el) {
+      el.removeAttribute('title');
+    });
 
     body = cleanBodyEl.innerText || '';
     originalLength = body.length;
@@ -1689,27 +216,29 @@ function extractEmailData() {
     }
   }
 
-  // URLs - extract from links in the email body (using cleaned clone)
-  const urls = [];
+  var urls = [];
   if (cleanBodyEl) {
-    const links = cleanBodyEl.querySelectorAll('a[href]');
-    links.forEach(link => {
-      const href = link.getAttribute('href');
+    cleanBodyEl.querySelectorAll('a[href]').forEach(function(link) {
+      var href = link.getAttribute('href');
       if (href && !href.startsWith('mailto:') && !href.startsWith('#')) {
         urls.push(href);
       }
     });
   }
 
-  return { senderName, senderEmail, subject, body, urls, truncated, originalLength };
+  return { senderName: senderName, senderEmail: senderEmail, subject: subject, body: body, urls: urls, truncated: truncated, originalLength: originalLength };
 }
 
-// Build the results panel HTML
-function buildResultsPanelHTML(result) {
-  const { confidence, label, pushed, verify, reasoning } = result;
+// --- AI / Deep Scan Results Panel ---
 
-  // Color based on label
-  let color, bgColor, borderColor, barColor;
+function buildResultsPanelHTML(result) {
+  var confidence = result.confidence;
+  var label = result.label;
+  var pushed = result.pushed;
+  var verify = result.verify;
+  var reasoning = result.reasoning;
+
+  var color, bgColor, borderColor, barColor;
   if (label === 'safe') {
     color = '#15803d'; bgColor = '#f0fdf4'; borderColor = '#86efac'; barColor = '#22c55e';
   } else if (label === 'caution') {
@@ -1718,108 +247,171 @@ function buildResultsPanelHTML(result) {
     color = '#dc2626'; bgColor = '#fef2f2'; borderColor = '#fca5a5'; barColor = '#ef4444';
   }
 
-  // PUSHED indicators
-  const pushedKeys = [
-    { key: 'pressure', label: 'Pressure' },
-    { key: 'urgency', label: 'Urgency' },
-    { key: 'surprise', label: 'Surprise' },
-    { key: 'highStakes', label: 'High-stakes' },
-    { key: 'excitement', label: 'Excitement' },
-    { key: 'desperation', label: 'Desperation' }
+  var pushedKeys = [
+    { key: 'pressure', label: 'Pressure' }, { key: 'urgency', label: 'Urgency' },
+    { key: 'surprise', label: 'Surprise' }, { key: 'highStakes', label: 'High-stakes' },
+    { key: 'excitement', label: 'Excitement' }, { key: 'desperation', label: 'Desperation' }
   ];
 
-  const detectedPushed = pushedKeys.filter(p => pushed[p.key]?.detected);
-  const notDetectedPushed = pushedKeys.filter(p => !pushed[p.key]?.detected);
-
-  let pushedHTML = '';
-  detectedPushed.forEach(p => {
-    const evidence = pushed[p.key].evidence || '';
-    pushedHTML += `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
-      <span style="color:${color};font-weight:600;flex-shrink:0;">&#9679;</span>
-      <span><strong>${p.label}</strong>${evidence ? ' — ' + evidence : ''}</span>
-    </div>`;
+  // Build PUSHED section with DOM
+  var pushedContainer = document.createElement('div');
+  pushedKeys.forEach(function(p) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;';
+    if (pushed && pushed[p.key] && pushed[p.key].detected) {
+      var dot = document.createElement('span');
+      dot.style.cssText = 'color:' + color + ';font-weight:600;flex-shrink:0;';
+      dot.textContent = '\u25CF';
+      var text = document.createElement('span');
+      var b = document.createElement('strong');
+      b.textContent = p.label;
+      text.appendChild(b);
+      if (pushed[p.key].evidence) {
+        text.appendChild(document.createTextNode(' \u2014 ' + pushed[p.key].evidence));
+      }
+      row.appendChild(dot);
+      row.appendChild(text);
+    } else {
+      var circle = document.createElement('span');
+      circle.style.color = '#94a3b8';
+      circle.textContent = '\u25CB ' + p.label;
+      row.appendChild(circle);
+    }
+    pushedContainer.appendChild(row);
   });
-  if (notDetectedPushed.length > 0) {
-    pushedHTML += `<div style="color:#94a3b8;margin-top:4px;">`;
-    pushedHTML += notDetectedPushed.map(p => `&#9675; ${p.label}`).join('&nbsp;&nbsp;');
-    pushedHTML += `</div>`;
-  }
 
-  // VERIFY flags
-  let verifyHTML = '';
+  // Build VERIFY section with DOM
+  var verifyLabels = {
+    view: 'View Carefully',
+    evaluate: 'Evaluate Context',
+    request: 'Request Examination',
+    interrogate: 'Interrogate Action',
+    freeze: 'Freeze Indicators',
+    instincts: 'Your Instincts'
+  };
+  var verifyContainer = document.createElement('div');
   if (verify && verify.length > 0) {
-    verify.forEach(v => {
-      const icon = v.status === 'warning'
-        ? `<span style="color:${color};font-weight:bold;">!</span>`
-        : `<span style="color:#22c55e;font-weight:bold;">&#10003;</span>`;
-      verifyHTML += `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
-        ${icon} <span>${v.detail}</span>
-      </div>`;
+    verify.forEach(function(v) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;';
+      var icon = document.createElement('span');
+      if (v.status === 'warning') {
+        icon.style.cssText = 'color:' + color + ';font-weight:bold;flex-shrink:0;';
+        icon.textContent = '!';
+      } else {
+        icon.style.cssText = 'color:#22c55e;font-weight:bold;flex-shrink:0;';
+        icon.textContent = '\u2713';
+      }
+      var text = document.createElement('span');
+      var flagName = verifyLabels[v.flag] || v.flag;
+      text.appendChild(document.createTextNode(v.detail));
+      row.appendChild(icon);
+      row.appendChild(text);
+      verifyContainer.appendChild(row);
     });
   }
 
-  return `
-    <div style="font-family:'Google Sans',Roboto,Arial,sans-serif;font-size:13px;color:#334155;background:${bgColor};border:1px solid ${borderColor};border-radius:8px;padding:16px;margin:8px 0 12px 0;position:relative;z-index:100;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div style="font-weight:600;font-size:14px;color:${color};">AI Phishing Analysis</div>
-        <button class="vervain-ai-collapse" style="background:none;border:none;cursor:pointer;color:#94a3b8;font-size:18px;padding:0 4px;" title="Collapse">&#9650;</button>
-      </div>
-      <div class="vervain-ai-panel-body">
-        <div style="margin-bottom:12px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-            <span style="font-weight:600;">Confidence:</span>
-            <div style="flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;">
-              <div style="width:${confidence}%;height:100%;background:${barColor};border-radius:4px;"></div>
-            </div>
-            <span style="font-weight:700;color:${color};">${confidence}% — ${label.charAt(0).toUpperCase() + label.slice(1)}</span>
-          </div>
-        </div>
-        <div style="margin-bottom:12px;">
-          <div style="font-weight:600;margin-bottom:6px;">PUSHED Indicators:</div>
-          ${pushedHTML}
-        </div>
-        <div style="margin-bottom:12px;">
-          <div style="font-weight:600;margin-bottom:6px;">VERIFY Flags:</div>
-          ${verifyHTML}
-        </div>
-        <div style="background:rgba(0,0,0,0.03);border-radius:6px;padding:10px;font-style:italic;line-height:1.5;">
-          "${reasoning}"
-        </div>
-      </div>
-    </div>
-  `;
+  // Build full panel with DOM
+  var panel = document.createElement('div');
+  panel.style.cssText =
+    'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:13px;color:#334155;' +
+    'background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:8px;' +
+    'padding:16px;margin:8px 0 12px 0;position:relative;z-index:100;';
+
+  var headerRow = document.createElement('div');
+  headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
+  var panelTitle = document.createElement('div');
+  panelTitle.style.cssText = 'font-weight:600;font-size:14px;color:' + color + ';';
+  panelTitle.textContent = 'AI Phishing Analysis';
+  var collapseBtn = document.createElement('button');
+  collapseBtn.className = 'vervain-ai-collapse';
+  collapseBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:#94a3b8;font-size:18px;padding:0 4px;';
+  collapseBtn.title = 'Collapse';
+  collapseBtn.textContent = '\u25B2';
+  headerRow.appendChild(panelTitle);
+  headerRow.appendChild(collapseBtn);
+
+  var panelBody = document.createElement('div');
+  panelBody.className = 'vervain-ai-panel-body';
+
+  // Confidence bar
+  var confSection = document.createElement('div');
+  confSection.style.marginBottom = '12px';
+  var confRow = document.createElement('div');
+  confRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+  var confLabel = document.createElement('span');
+  confLabel.style.fontWeight = '600';
+  confLabel.textContent = 'Confidence:';
+  var barOuter = document.createElement('div');
+  barOuter.style.cssText = 'flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;';
+  var barInner = document.createElement('div');
+  barInner.style.cssText = 'width:' + confidence + '%;height:100%;background:' + barColor + ';border-radius:4px;';
+  barOuter.appendChild(barInner);
+  var confValue = document.createElement('span');
+  confValue.style.cssText = 'font-weight:700;color:' + color + ';';
+  confValue.textContent = confidence + '% \u2014 ' + label.charAt(0).toUpperCase() + label.slice(1);
+  confRow.appendChild(confLabel);
+  confRow.appendChild(barOuter);
+  confRow.appendChild(confValue);
+  confSection.appendChild(confRow);
+
+  // PUSHED section
+  var pushedSection = document.createElement('div');
+  pushedSection.style.marginBottom = '12px';
+  var pushedTitle = document.createElement('div');
+  pushedTitle.style.cssText = 'font-weight:600;margin-bottom:6px;';
+  pushedTitle.textContent = 'PUSHED Indicators:';
+  pushedSection.appendChild(pushedTitle);
+  pushedSection.appendChild(pushedContainer);
+
+  // VERIFY section
+  var verifySection = document.createElement('div');
+  verifySection.style.marginBottom = '12px';
+  var verifyTitle = document.createElement('div');
+  verifyTitle.style.cssText = 'font-weight:600;margin-bottom:6px;';
+  verifyTitle.textContent = 'VERIFY Flags:';
+  verifySection.appendChild(verifyTitle);
+  verifySection.appendChild(verifyContainer);
+
+  // Reasoning
+  var reasoningDiv = document.createElement('div');
+  reasoningDiv.style.cssText = 'background:rgba(0,0,0,0.03);border-radius:6px;padding:10px;font-style:italic;line-height:1.5;';
+  reasoningDiv.textContent = '"' + reasoning + '"';
+
+  panelBody.appendChild(confSection);
+  panelBody.appendChild(pushedSection);
+  panelBody.appendChild(verifySection);
+  panelBody.appendChild(reasoningDiv);
+
+  panel.appendChild(headerRow);
+  panel.appendChild(panelBody);
+
+  return panel;
 }
 
-// Show the results panel below the email header
 function showAIResultsPanel(result) {
   isModifyingDOM = true;
   try {
-    // Remove any existing panel
-    const existing = document.querySelector('.vervain-ai-results');
+    var existing = document.querySelector('.vervain-ai-results');
     if (existing) existing.remove();
 
-    // Find the email header area - try multiple selectors
-    const headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
-    if (!headerArea) {
-      console.error('[Vervain] Could not find email header area for results panel');
-      return;
-    }
+    var headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    if (!headerArea) return;
 
-    const panel = document.createElement('div');
-    panel.className = 'vervain-ai-results';
-    panel.innerHTML = buildResultsPanelHTML(result);
+    var wrapper = document.createElement('div');
+    wrapper.className = 'vervain-ai-results';
+    var panel = buildResultsPanelHTML(result);
+    wrapper.appendChild(panel);
 
-    // Insert after the header
-    headerArea.parentNode.insertBefore(panel, headerArea.nextSibling);
+    headerArea.parentNode.insertBefore(wrapper, headerArea.nextSibling);
 
-    // Wire collapse/expand toggle
-    const collapseBtn = panel.querySelector('.vervain-ai-collapse');
-    const body = panel.querySelector('.vervain-ai-panel-body');
+    var collapseBtn = wrapper.querySelector('.vervain-ai-collapse');
+    var body = wrapper.querySelector('.vervain-ai-panel-body');
     if (collapseBtn && body) {
-      collapseBtn.addEventListener('click', () => {
-        const collapsed = body.style.display === 'none';
+      collapseBtn.addEventListener('click', function() {
+        var collapsed = body.style.display === 'none';
         body.style.display = collapsed ? '' : 'none';
-        collapseBtn.innerHTML = collapsed ? '&#9650;' : '&#9660;';
+        collapseBtn.textContent = collapsed ? '\u25B2' : '\u25BC';
         collapseBtn.title = collapsed ? 'Collapse' : 'Expand';
       });
     }
@@ -1828,250 +420,338 @@ function showAIResultsPanel(result) {
   }
 }
 
-// Show an error in the results panel area
 function showAIError(message) {
   isModifyingDOM = true;
   try {
-    const existing = document.querySelector('.vervain-ai-results');
+    var existing = document.querySelector('.vervain-ai-results');
     if (existing) existing.remove();
 
-    const headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    var headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
     if (!headerArea) return;
 
-    const panel = document.createElement('div');
+    var panel = document.createElement('div');
     panel.className = 'vervain-ai-results';
-    panel.innerHTML = `
-      <div style="font-family:'Google Sans',Roboto,Arial,sans-serif;font-size:13px;color:#dc2626;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin:8px 0 12px 0;">
-        <strong>Analysis failed:</strong> ${message}
-      </div>
-    `;
+    var inner = document.createElement('div');
+    inner.style.cssText =
+      'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:13px;color:#dc2626;' +
+      'background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin:8px 0 12px 0;';
+    var strong = document.createElement('strong');
+    strong.textContent = 'Analysis failed: ';
+    inner.appendChild(strong);
+    inner.appendChild(document.createTextNode(message));
+    panel.appendChild(inner);
     headerArea.parentNode.insertBefore(panel, headerArea.nextSibling);
   } finally {
     isModifyingDOM = false;
   }
 }
 
-// Handle the "Analyze with AI" button click
-async function handleAIAnalyze(button) {
-  // Update button to loading state
+// --- VERIFY button (AI analysis trigger) ---
+
+async function handleVerifyClick(button) {
   button.disabled = true;
-  button.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:vervain-spin 1s linear infinite;flex-shrink:0;">
-      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-    </svg>
-    <span>Analyzing...</span>
-  `;
+  button.textContent = '';
+  var spinner = document.createElement('span');
+  spinner.textContent = 'Analyzing...';
+  button.appendChild(spinner);
 
   try {
-    const emailData = extractEmailData();
-
+    var emailData = extractEmailData();
     if (!emailData.senderEmail && !emailData.body) {
       showAIError('Could not extract email content. Please open an email first.');
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
-      type: 'AI_ANALYZE',
-      data: emailData
-    });
+    var response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
 
     if (response.success) {
       showAIResultsPanel(response.result);
-      // Update button to show score
-      const result = response.result;
-      let badgeColor;
+      var result = response.result;
+      var badgeColor;
       if (result.label === 'safe') badgeColor = '#22c55e';
       else if (result.label === 'caution') badgeColor = '#eab308';
       else badgeColor = '#ef4444';
 
-      button.innerHTML = `
-        <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${badgeColor};color:white;font-size:11px;font-weight:700;flex-shrink:0;">${result.confidence}</span>
-        <span>${result.label.charAt(0).toUpperCase() + result.label.slice(1)}</span>
-      `;
+      button.textContent = '';
+      var badge = document.createElement('span');
+      badge.style.cssText =
+        'display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;' +
+        'border-radius:50%;background:' + badgeColor + ';color:white;font-size:11px;font-weight:700;flex-shrink:0;margin-right:4px;';
+      badge.textContent = String(result.confidence);
+      var labelSpan = document.createElement('span');
+      labelSpan.textContent = result.label.charAt(0).toUpperCase() + result.label.slice(1);
+      button.appendChild(badge);
+      button.appendChild(labelSpan);
       button.disabled = false;
     } else {
       if (response.error === 'NO_API_KEY') {
-        showAIError('No API key configured. <a href="' + chrome.runtime.getURL('options.html') + '#ai" target="_blank" style="color:#4B2EE3;text-decoration:underline;">Configure AI in extension settings</a>');
+        showAIError('No API key configured. Go to extension settings to configure AI.');
       } else {
         showAIError(response.error || 'Unknown error occurred');
       }
-      // Reset button
-      resetAIButton(button);
+      resetVerifyButton(button);
     }
   } catch (error) {
     console.error('[Vervain] AI analysis error:', error);
-    showAIError('Analysis failed — try again');
-    resetAIButton(button);
+    showAIError('Analysis failed \u2014 try again');
+    resetVerifyButton(button);
   }
 }
 
-function resetAIButton(button) {
+function resetVerifyButton(button) {
   button.disabled = false;
-  button.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-    </svg>
-    <span>Analyze with AI</span>
-  `;
+  button.textContent = '\uD83D\uDEE1\uFE0F VERIFY my suspicion';
 }
 
-// Inject the "Analyze with AI" button near the sender info
-function injectAIButton() {
-  // Only inject in email view (when a single email is open)
-  const senderEl = document.querySelector('.gD[email]');
+function injectVerifyButton() {
+  var senderEl = document.querySelector('.gD[email]');
   if (!senderEl) return;
-
-  // Don't inject if button already exists in this email view
   if (document.querySelector('.vervain-ai-btn')) return;
 
-  // Find the sender info row — the parent that contains sender name/email
-  // Gmail uses .gE for the header area of an open email
-  const headerRow = senderEl.closest('.gE') || senderEl.closest('tr') || senderEl.parentElement;
+  var headerRow = senderEl.closest('.gE') || senderEl.closest('tr') || senderEl.parentElement;
   if (!headerRow) return;
 
-  const button = document.createElement('button');
+  var button = document.createElement('button');
   button.className = 'vervain-ai-btn';
-  button.style.cssText = `
-    display:inline-flex;align-items:center;gap:4px;
-    padding:4px 10px;margin-left:8px;
-    background:#f8f7ff;color:#4B2EE3;
-    border:1px solid #d4d0f7;border-radius:14px;
-    font-family:'Google Sans',Roboto,Arial,sans-serif;
-    font-size:12px;font-weight:500;cursor:pointer;
-    white-space:nowrap;vertical-align:middle;
-    transition:background 0.15s;
-  `;
-  button.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-    </svg>
-    <span>Analyze with AI</span>
-  `;
-  button.addEventListener('mouseenter', () => { button.style.background = '#eeeaff'; });
-  button.addEventListener('mouseleave', () => { button.style.background = '#f8f7ff'; });
-  button.addEventListener('click', (e) => {
+  button.style.cssText =
+    'display:inline-flex;align-items:center;gap:4px;' +
+    'padding:4px 10px;margin-left:8px;' +
+    'background:#f8f7ff;color:#4B2EE3;' +
+    'border:1px solid #d4d0f7;border-radius:14px;' +
+    'font-family:Google Sans,Roboto,Arial,sans-serif;' +
+    'font-size:12px;font-weight:500;cursor:pointer;' +
+    'white-space:nowrap;vertical-align:middle;' +
+    'transition:background 0.15s;';
+  button.textContent = '\uD83D\uDEE1\uFE0F VERIFY my suspicion';
+
+  button.addEventListener('mouseenter', function() { button.style.background = '#eeeaff'; });
+  button.addEventListener('mouseleave', function() { button.style.background = '#f8f7ff'; });
+  button.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    handleAIAnalyze(button);
+    handleVerifyClick(button);
   });
 
-  // Add the spinner keyframe animation if not already added
   if (!document.querySelector('#vervain-ai-styles')) {
-    const style = document.createElement('style');
+    var style = document.createElement('style');
     style.id = 'vervain-ai-styles';
-    style.textContent = `@keyframes vervain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+    style.textContent =
+      '@keyframes vervain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }' +
+      '@keyframes vervain-fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }';
     document.head.appendChild(style);
   }
 
-  // Insert the button next to the sender element
   headerRow.appendChild(button);
 }
 
-// Check if AI is enabled and inject button if so
-function maybeInjectAIButton(settings) {
-  if (settings && settings.aiEnabled) {
-    injectAIButton();
+// --- Suspicious link highlighting ---
+
+async function scanEmailLinks() {
+  var bodyEl = document.querySelector('.a3s.aiL');
+  if (!bodyEl) return;
+
+  var links = bodyEl.querySelectorAll('a[href]');
+  for (var i = 0; i < links.length; i++) {
+    var link = links[i];
+    if (link.hasAttribute('data-vervain-link-scanned')) continue;
+    link.setAttribute('data-vervain-link-scanned', 'true');
+
+    var href = link.getAttribute('href') || '';
+    if (!href || href.startsWith('mailto:') || href.startsWith('#')) continue;
+
+    // Extract domain from the link URL
+    var linkDomain;
+    try {
+      linkDomain = new URL(href).hostname;
+    } catch {
+      continue;
+    }
+    if (!linkDomain) continue;
+
+    try {
+      var verdict = await chrome.runtime.sendMessage({
+        type: 'PASSIVE_SCAN',
+        data: { sender: '', domain: linkDomain, contactName: '' }
+      });
+
+      if (verdict && verdict.verdict !== 'clean') {
+        markSuspiciousLink(link, linkDomain, verdict);
+      }
+    } catch (err) {
+      console.warn('[Vervain] Link scan failed:', err.message);
+      break;
+    }
   }
 }
 
-// Clear dismissed warnings only on fresh page load (not on every scan)
-if (window.performance && window.performance.navigation.type === window.performance.navigation.TYPE_RELOAD) {
-  console.log('[Vervain] Page reloaded, clearing dismissed warnings');
-  if (window.phishguardDismissedWarnings) {
-    window.phishguardDismissedWarnings.clear();
-  }
-  if (window.phishguardDismissedSpoofedWarnings) {
-    window.phishguardDismissedSpoofedWarnings.clear();
-  }
-}
-
-// Set up mutation observer to detect when new emails are loaded
-setTimeout(() => {
+function markSuspiciousLink(linkEl, domain, verdict) {
+  isModifyingDOM = true;
   try {
-    // Check if extension context is still valid
-    if (typeof chrome === 'undefined' || !chrome.runtime) {
-      console.log('[Vervain] Extension context not available for observer setup');
+    linkEl.style.cssText +=
+      ';background:#fef2f2 !important;color:#dc2626 !important;' +
+      'text-decoration:line-through !important;';
+
+    linkEl.title = 'Vervain: Suspicious link (' + verdict.rule + ') \u2014 ' + verdict.evidence;
+  } catch (error) {
+    console.error('[Vervain] Error marking suspicious link:', error);
+  } finally {
+    isModifyingDOM = false;
+  }
+}
+
+// --- Auto deep scan (AI + TI) ---
+
+async function runAutoDeepScan() {
+  // Don't run twice on the same email view
+  if (document.querySelector('.vervain-ai-results')) return;
+
+  var emailData = extractEmailData();
+  if (!emailData.senderEmail && !emailData.body) return;
+
+  // Show a loading indicator
+  isModifyingDOM = true;
+  var loadingEl;
+  try {
+    var headerArea = document.querySelector('.ha') || document.querySelector('.gE.iv.gt');
+    if (headerArea) {
+      loadingEl = document.createElement('div');
+      loadingEl.className = 'vervain-ai-results';
+      var inner = document.createElement('div');
+      inner.style.cssText =
+        'font-family:Google Sans,Roboto,Arial,sans-serif;font-size:13px;color:#4B2EE3;' +
+        'background:#f8f7ff;border:1px solid #d4d0f7;border-radius:8px;padding:12px 16px;margin:8px 0 12px 0;';
+      inner.textContent = 'Analyzing email...';
+      loadingEl.appendChild(inner);
+      headerArea.parentNode.insertBefore(loadingEl, headerArea.nextSibling);
+    }
+  } finally {
+    isModifyingDOM = false;
+  }
+
+  try {
+    var response = await chrome.runtime.sendMessage({ type: 'AI_ANALYZE', data: emailData });
+    if (response.success) {
+      showAIResultsPanel(response.result);
+    } else if (response.error === 'NO_API_KEY') {
+      showAIError('No API key configured. Go to extension settings to configure AI.');
+    } else {
+      showAIError(response.error || 'Analysis failed');
+    }
+  } catch (err) {
+    console.error('[Vervain] Auto deep scan error:', err);
+    showAIError('Analysis failed \u2014 try again');
+  }
+}
+
+// --- Main scan flow ---
+
+async function scanEmail() {
+  if (isCurrentlyScanning || isModifyingDOM) return;
+  if (!isExtensionContextValid()) return;
+
+  isCurrentlyScanning = true;
+  try {
+    // Extract sender info from the currently open email
+    var senderEl = document.querySelector('.gD[email]');
+    if (!senderEl) {
+      // No email open - check list view for sender elements
+      await scanEmailList();
       return;
     }
-    
-    // Find potential targets for the observer
-    const targets = document.querySelectorAll('.AO, .nH');
-    
-    if (targets.length === 0) {
-      console.log('[Vervain] No suitable targets found for observer');
-      return;
+
+    var senderEmail = senderEl.getAttribute('email') || '';
+    var senderName = senderEl.getAttribute('name') || senderEl.innerText || '';
+    var domain = extractDomain(senderEmail);
+    if (!domain) return;
+
+    // Get scan config from service worker
+    var config = { autoTI: false, autoAI: false };
+    try {
+      config = await chrome.runtime.sendMessage({ type: 'GET_SCAN_CONFIG' });
+    } catch (err) {
+      console.warn('[Vervain] Could not get scan config:', err.message);
     }
-    
-    // Create a mutation observer to detect when new emails are loaded
-    const observer = new MutationObserver((mutations) => {
-      // Don't use chrome APIs directly in the observer callback
-      // Just call scanForPhishing which has its own checks
-      try {
-        // Skip if we're currently modifying the DOM ourselves
-        if (isModifyingDOM) {
-          console.log('[Vervain] Skipping scan - we are modifying DOM');
-          return;
-        }
-        
-        // Skip if we're already scanning
-        if (isCurrentlyScanning) {
-          console.log('[Vervain] Skipping scan - already in progress');
-          return;
-        }
-        
-        console.log('[Vervain] DOM mutations detected, scanning...');
-        
-        // Check if extension context is still valid before scanning
-        if (typeof chrome === 'undefined' || !chrome.runtime) {
-          console.log('[Vervain] Extension context invalidated during observation');
-          observer.disconnect();
-          return;
-        }
-        
-        // Use requestAnimationFrame to delay the scan slightly
-        // This helps avoid context invalidation issues
-        requestAnimationFrame(() => {
-          scanForPhishing();
-        });
-      } catch (error) {
-        console.error('[Vervain] Error in mutation observer callback:', error);
-        
-        // If we get an error, disconnect the observer to prevent further issues
-        try {
-          observer.disconnect();
-        } catch (disconnectError) {
-          console.error('[Vervain] Error disconnecting observer:', disconnectError);
+
+    // Send passive scan to service worker
+    var passiveHit = false;
+    try {
+      var verdict = await chrome.runtime.sendMessage({
+        type: 'PASSIVE_SCAN',
+        data: { sender: senderEmail, domain: domain, contactName: senderName }
+      });
+
+      if (verdict && verdict.verdict !== 'clean') {
+        passiveHit = true;
+        if (verdict.rule.indexOf('contact-spoof') !== -1) {
+          addContactImpersonationIndicator(senderEl, senderName, senderEmail, verdict.evidence);
+        } else {
+          insertWarning(senderEmail, domain, verdict);
         }
       }
+    } catch (err) {
+      console.warn('[Vervain] Passive scan failed:', err.message);
+    }
+
+    // Scan links in the email body for suspicious domains
+    await scanEmailLinks();
+
+    // Auto-run AI analysis only when the user has opted in
+    if (config.autoAI) {
+      runAutoDeepScan();
+    } else {
+      injectVerifyButton();
+    }
+
+  } finally {
+    isCurrentlyScanning = false;
+  }
+}
+
+async function scanEmailList() {
+  // No-op in list view: all warnings/indicators only appear when an email is opened.
+  // We still mark elements as scanned so we don't re-process them later.
+  var senderElements = document.querySelectorAll('.yX.xY .yW span[email]');
+  for (var i = 0; i < senderElements.length; i++) {
+    senderElements[i].setAttribute('data-vervain-scanned', 'true');
+  }
+}
+
+// --- Observers ---
+
+if (window.performance && window.performance.navigation.type === window.performance.navigation.TYPE_RELOAD) {
+  dismissedWarnings.clear();
+  dismissedContactWarnings.clear();
+}
+
+setTimeout(function() {
+  try {
+    if (!isExtensionContextValid()) return;
+
+    var targets = document.querySelectorAll('.AO, .nH');
+    if (targets.length === 0) return;
+
+    var observer = new MutationObserver(function() {
+      if (isModifyingDOM || isCurrentlyScanning) return;
+      if (!isExtensionContextValid()) {
+        observer.disconnect();
+        return;
+      }
+      requestAnimationFrame(function() { scanEmail(); });
     });
-    
-    // Set up the observer on each potential target
-    targets.forEach(target => {
-      observer.observe(target, { 
-        childList: true, 
-        subtree: true
-      });
+
+    targets.forEach(function(target) {
+      observer.observe(target, { childList: true, subtree: true });
     });
-    
-    console.log('[Vervain] Observers set up on targets:', targets.length);
-    
-    // Run an initial scan
-    scanForPhishing();
+
+    scanEmail();
   } catch (error) {
     console.error('[Vervain] Error setting up observer:', error);
   }
 }, 1000);
 
-// Force scan when tab becomes active
-document.addEventListener('visibilitychange', () => {
-  // Check if extension context is still valid
-  if (typeof chrome === 'undefined' || !chrome.runtime) {
-          console.log('[Vervain] Extension context not available for visibility change');
-    return;
-  }
-  
+document.addEventListener('visibilitychange', function() {
+  if (!isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
-          console.log('[Vervain] Tab became visible, scanning...');
-    scanForPhishing();
+    scanEmail();
   }
 });

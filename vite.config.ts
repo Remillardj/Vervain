@@ -27,10 +27,11 @@ export default defineConfig(({ mode }) => ({
         main: path.resolve(__dirname, "index.html"),
         popup: path.resolve(__dirname, "popup.html"),
         options: path.resolve(__dirname, "options.html"),
+        background: path.resolve(__dirname, "src/background/index.ts"),
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          return chunkInfo.name === 'popup' || chunkInfo.name === 'options'
+          return ['popup', 'options', 'background'].includes(chunkInfo.name)
             ? '[name].js'
             : 'assets/[name]-[hash].js';
         },

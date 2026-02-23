@@ -1,0 +1,7 @@
+{
+  "source": "synthetic",
+  "expectedLabel": "safe",
+  "expectedScoreRange": [0, 30],
+  "expectedPushed": [],
+  "description": "Legitimate tech newsletter with standard content and proper unsubscribe link"
+}
