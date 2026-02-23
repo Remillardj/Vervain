@@ -1,6 +1,6 @@
 // Background script for the Vervain extension
 
-import { AI_SYSTEM_PROMPT, buildUserMessage, EmailData } from './aiPrompt';
+import { AI_SYSTEM_PROMPT, buildUserMessage, EmailData, EnrichmentContext } from './aiPrompt';
 import { VervainDB } from './db';
 import { DetectionEngine } from './detection/engine';
 import { ConfigManager, MergedConfig, ManagedStoragePolicy, LocalSettings } from './configManager';
@@ -172,9 +172,22 @@ async function handleDeepScan(data: {
     }
   }
 
-  // 4. AI analysis (if enabled and auto-AI is on)
+  // 4. Build enrichment context from pre-screening results
+  const enrichment: EnrichmentContext = {};
+  if (domainResult.verdict !== 'clean') {
+    enrichment.domainVerdict = { verdict: domainResult.verdict, rule: domainResult.rule, evidence: domainResult.evidence };
+  }
+  if (threatIntel) {
+    enrichment.threatIntel = threatIntel;
+  }
+  if (vt) {
+    enrichment.virusTotal = vt;
+  }
+
+  // 5. AI analysis (if enabled and has API key — autoAI controls whether
+  //    content script triggers DEEP_SCAN, not whether AI runs within it)
   let ai: Record<string, unknown> | null = null;
-  if (currentConfig.autoAI && currentConfig.aiEnabled && currentConfig.aiApiKey) {
+  if (currentConfig.aiEnabled && currentConfig.aiApiKey) {
     try {
       ai = await handleAIAnalyze({
         senderName: data.contactName,
@@ -182,20 +195,20 @@ async function handleDeepScan(data: {
         subject: data.subject,
         body: data.body,
         urls: data.links,
-      });
+      }, enrichment);
     } catch (err) {
       console.warn('[Vervain] AI analysis failed:', err);
     }
   }
 
-  // 5. Aggregate verdict
+  // 6. Aggregate verdict (reduced weights to avoid double-counting since AI now sees enrichment)
   let aggregateVerdict: 'clean' | 'warning' | 'suspicious' = domainResult.verdict;
   let confidence = 0;
 
-  if (domainResult.verdict === 'suspicious') confidence += 40;
-  else if (domainResult.verdict === 'warning') confidence += 20;
-  if (bloomHit) { confidence += 30; aggregateVerdict = 'suspicious'; }
-  if (vt && vt.reputation < 0) { confidence += 20; aggregateVerdict = 'suspicious'; }
+  if (domainResult.verdict === 'suspicious') confidence += 30;
+  else if (domainResult.verdict === 'warning') confidence += 15;
+  if (bloomHit) { confidence += 25; aggregateVerdict = 'suspicious'; }
+  if (vt && vt.reputation < 0) { confidence += 15; aggregateVerdict = 'suspicious'; }
   if (ai && (ai as { confidence?: number }).confidence && (ai as { confidence?: number }).confidence! > 60) {
     confidence += 30;
     aggregateVerdict = 'suspicious';
@@ -284,7 +297,7 @@ function parseAIResponse(responseText: string): Record<string, unknown> {
   return JSON.parse(cleaned);
 }
 
-async function handleAIAnalyze(emailData: EmailData): Promise<Record<string, unknown>> {
+async function handleAIAnalyze(emailData: EmailData, enrichment?: EnrichmentContext): Promise<Record<string, unknown>> {
   // Read AI settings from storage
   const settings = await chrome.storage.local.get(['aiEnabled', 'aiProvider', 'aiApiKey', 'aiModel']);
 
@@ -295,7 +308,7 @@ async function handleAIAnalyze(emailData: EmailData): Promise<Record<string, unk
     throw new Error('NO_API_KEY');
   }
 
-  const userMessage = buildUserMessage(emailData);
+  const userMessage = buildUserMessage(emailData, enrichment);
   const provider = settings.aiProvider || 'anthropic';
   const model = settings.aiModel || 'claude-sonnet-4-5-20250929';
 

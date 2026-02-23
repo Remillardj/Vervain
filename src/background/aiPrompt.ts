@@ -67,7 +67,10 @@ Respond with ONLY a valid JSON object (no markdown fences, no text outside the J
   "reasoning": "<2-3 sentence summary>"
 }
 
-Always include ALL 6 VERIFY flags (view, evaluate, request, interrogate, freeze, instincts) in every response. Be conservative with both PUSHED and VERIFY: only mark PUSHED indicators as detected when there is unambiguous evidence, and only set VERIFY flags to "warning" when there is a concrete, specific indicator — not because you lack context to confirm something. Unknown senders, unsolicited emails, and the presence of links are all normal. Default to "ok" unless the email gives you a specific reason to warn. A normal newsletter, marketing email, or routine communication with no manipulation tactics should score very low. Remember that sophisticated attacks may appear completely legitimate on the surface — evaluate the underlying intent and behavioral patterns, not just surface-level technical indicators.`;
+Always include ALL 6 VERIFY flags (view, evaluate, request, interrogate, freeze, instincts) in every response. Be conservative with both PUSHED and VERIFY: only mark PUSHED indicators as detected when there is unambiguous evidence, and only set VERIFY flags to "warning" when there is a concrete, specific indicator — not because you lack context to confirm something. Unknown senders, unsolicited emails, and the presence of links are all normal. Default to "ok" unless the email gives you a specific reason to warn. A normal newsletter, marketing email, or routine communication with no manipulation tactics should score very low. Remember that sophisticated attacks may appear completely legitimate on the surface — evaluate the underlying intent and behavioral patterns, not just surface-level technical indicators.
+
+## External Intelligence (when provided)
+The email may include an "External Intelligence" section with automated pre-screening results: domain analysis verdicts, threat feed matches, and VirusTotal reputation data. Treat these as corroborating signals — they strengthen existing suspicions but should not override your independent analysis. Apply additive points: +5 for a domain analysis warning, +10 for a threat feed match, +5 for negative VirusTotal reputation. The absence of external intelligence does NOT indicate safety — it simply means pre-screening data was unavailable.`;
 
 export interface EmailData {
   senderName: string;
@@ -79,7 +82,13 @@ export interface EmailData {
   originalLength?: number;
 }
 
-export function buildUserMessage(emailData: EmailData): string {
+export interface EnrichmentContext {
+  domainVerdict?: { verdict: string; rule: string; evidence: string };
+  threatIntel?: { bloomHit: boolean; feedMatches: Array<{ feedId: string; domain: string }> };
+  virusTotal?: { reputation: number; domainAge: string; detectionRatio: string };
+}
+
+export function buildUserMessage(emailData: EmailData, enrichment?: EnrichmentContext): string {
   let message = `Analyze this email for phishing indicators:\n\n`;
   message += `**From:** ${emailData.senderName} <${emailData.senderEmail}>\n`;
   message += `**Subject:** ${emailData.subject}\n\n`;
@@ -90,6 +99,28 @@ export function buildUserMessage(emailData: EmailData): string {
     emailData.urls.forEach(url => {
       message += `- ${url}\n`;
     });
+  }
+
+  if (enrichment) {
+    const sections: string[] = [];
+
+    if (enrichment.domainVerdict && enrichment.domainVerdict.verdict !== 'clean') {
+      sections.push(`- Domain analysis: ${enrichment.domainVerdict.verdict} (${enrichment.domainVerdict.rule}) — ${enrichment.domainVerdict.evidence}`);
+    }
+
+    if (enrichment.threatIntel && enrichment.threatIntel.bloomHit) {
+      const feeds = enrichment.threatIntel.feedMatches.map(m => m.feedId).join(', ');
+      sections.push(`- Threat feed match: domain found in ${feeds || 'bloom filter'}`);
+    }
+
+    if (enrichment.virusTotal && enrichment.virusTotal.reputation < 0) {
+      sections.push(`- VirusTotal: reputation ${enrichment.virusTotal.reputation}, detection ratio ${enrichment.virusTotal.detectionRatio}, domain age ${enrichment.virusTotal.domainAge}`);
+    }
+
+    if (sections.length > 0) {
+      message += `\n**External Intelligence (from automated pre-screening):**\n`;
+      message += sections.join('\n') + '\n';
+    }
   }
 
   if (emailData.truncated) {
