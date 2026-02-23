@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Trash2, Edit2, UserPlus, User } from 'lucide-react';
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from '@/hooks/use-toast';
 import { TrustedContact, getData, saveTrustedContacts } from '@/utils/storage';
@@ -293,9 +294,12 @@ const TrustedContactsManager = () => {
                         checked={selectedContacts.has(contact.email)}
                         onCheckedChange={() => handleToggleContactSelection(contact.email)}
                       />
-                      <div>
-                        <div className="font-medium">{contact.name}</div>
-                        <div className="text-sm text-gray-500">{contact.email}</div>
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <div className="font-medium">{contact.name}</div>
+                          <div className="text-sm text-gray-500">{contact.email}</div>
+                        </div>
+                        <Badge variant="outline" className="text-xs">Local</Badge>
                       </div>
                     </div>
                     <div className="flex gap-2">

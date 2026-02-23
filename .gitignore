@@ -1,3 +1,10 @@
+node_modules/
+dist/
 CLAUDE.md
-docs/
+docs/plans/
+docs/*.md
+scripts/
 .vervain-cache/
+copy_firstrun_dataset/
+vervain_dataset/
+test-fixtures/
